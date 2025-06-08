@@ -23,6 +23,18 @@ A Tampermonkey userscript that adds a toggleable panel to track each player's re
 - The resource tracker panel appears on the left side of the screen.
 - Use the "Hide Tracker" button to toggle visibility.
 
+## How It Works
+
+- The script listens to in-game chat messages to detect resource changes.
+- It parses messages for trades, thefts, discards, Monopoly, and other events.
+- Player resource counts are updated in real-time based on parsed events.
+- Unresolved thefts are tracked, showing possible resource ranges until resolved.
+- The UI panel displays each player's resources and updates automatically.
+
+## Acknowledgements
+
+This project was adapted from [glasperfan/explorer](https://github.com/glasperfan/explorer/tree/master).
+
 ## Limitations
 
 - Relies on chat messages; may not be 100% accurate if messages are missed or the page is reloaded.
