@@ -1,5 +1,8 @@
 # Colonist.io Resource Tracker
 
+![image](https://github.com/user-attachments/assets/86491e78-9566-48c8-89b1-531fdb9a6fc6)
+
+
 A Tampermonkey userscript that adds a toggleable panel to track each player's resources in real-time on [Colonist.io](https://colonist.io/).
 
 ## Features
