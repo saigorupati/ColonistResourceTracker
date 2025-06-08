@@ -1,0 +1,16 @@
+{
+  "manifest_version": 3,
+  "name": "Colonist.io Resource Tracker",
+  "version": "1.0",
+  "description": "Track each player's resources in Colonist.io.",
+  "permissions": [],
+  "host_permissions": [
+    "https://colonist.io/*"
+  ],
+  "content_scripts": [
+    {
+      "matches": ["https://colonist.io/*"],
+      "js": ["content.js"]
+    }
+  ]
+}
