@@ -25,6 +25,7 @@ A Tampermonkey userscript that adds a toggleable panel to track each player's re
 
 ## How It Works
 
+- Explorer parses the game transaction log in Colonist.io to keep track of which player has which resources. No data is used to determine this that isn't clearly visible in the game.
 - The script listens to in-game chat messages to detect resource changes.
 - It parses messages for trades, thefts, discards, Monopoly, and other events.
 - Player resource counts are updated in real-time based on parsed events.
