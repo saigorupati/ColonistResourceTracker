@@ -218,8 +218,12 @@
                 const td = document.createElement('td');
                 td.className = 'resource-tbl-cell';
                 const actual = resources[res] || 0;
-                const possible = actual + getPossibleTheftCount(player, res);
-                td.textContent = possible > actual ? `${actual} (${possible})` : `${actual}`;
+                const possibleGain = getPossibleTheftCount(player, res);
+                const possibleLoss = getPossibleTheftLossCount(player, res);
+                let text = `${Math.max(0, actual)}`;
+                if (possibleGain > 0) text += ` (+${possibleGain})`;
+                if (possibleLoss > 0 && actual > 0) text += ` (-${Math.min(possibleLoss, actual)})`;
+                td.textContent = text;
                 row.appendChild(td);
             });
             tbody.appendChild(row);
@@ -229,29 +233,38 @@
         container.appendChild(table);
     }
 
-    function addResources(player, resourceList) {
-        // log('addResources', player, resourceList);
-        if (!playerResources[player]) {
-            playerResources[player] = { lumber: 0, ore: 0, brick: 0, wool: 0, grain: 0 };
-        }
 
+    function createEmptyResourceObj() {
+        return { lumber: 0, ore: 0, brick: 0, wool: 0, grain: 0, total: 0 };
+    }
+
+
+    function addResources(player, resourceList) {
+        if (!playerResources[player]) {
+            playerResources[player] = createEmptyResourceObj();
+        }
         resourceList.forEach(res => {
             if (RESOURCE_NAMES.includes(res)) {
                 playerResources[player][res]++;
+                playerResources[player].total++;
             }
         });
-
+        // Ensure total is only the sum of RESOURCE_NAMES
+        playerResources[player].total = RESOURCE_NAMES.reduce((sum, res) => sum + (playerResources[player][res] || 0), 0);
         updateTrackerUI();
     }
 
     function removeResources(player, resourceCosts) {
-        // log('removeResources', player, resourceCosts);
         if (!playerResources[player]) return;
         Object.entries(resourceCosts).forEach(([res, count]) => {
             if (RESOURCE_NAMES.includes(res)) {
-                playerResources[player][res] = Math.max(0, (playerResources[player][res] || 0) - count);
+                const before = playerResources[player][res] || 0;
+                const toRemove = Math.min(before, count);
+                playerResources[player][res] = before - toRemove;
             }
         });
+        // Ensure total is only the sum of RESOURCE_NAMES
+        playerResources[player].total = RESOURCE_NAMES.reduce((sum, res) => sum + (playerResources[player][res] || 0), 0);
         updateTrackerUI();
     }
 
@@ -270,7 +283,7 @@
                     }
                 });
             }
-        });;
+        });
 
         observer.observe(chatContainer, { childList: true, subtree: true });
         console.log("Resource tracker initialized.");
@@ -441,15 +454,16 @@
         // Subtract all of this resource from all other players
         Object.keys(playerResources).forEach(otherPlayer => {
             if (otherPlayer !== playerName) {
+                playerResources[otherPlayer].total -= playerResources[otherPlayer][resource];
+                if (playerResources[otherPlayer].total < 0) playerResources[otherPlayer].total = 0;
                 playerResources[otherPlayer][resource] = 0;
             }
         });
-
-        // Add the total stolen amount to the stealing player
         if (!playerResources[playerName]) {
-            playerResources[playerName] = { lumber: 0, ore: 0, brick: 0, wool: 0, grain: 0 };
+            playerResources[playerName] = createEmptyResourceObj();
         }
         playerResources[playerName][resource] = (playerResources[playerName][resource] || 0) + amount;
+        playerResources[playerName].total += amount;
 
         reviewThefts();
         updateTrackerUI();
@@ -546,10 +560,12 @@
         // Subtract one resource from current user, add to stealer
         if (playerResources[currentUserName] && playerResources[currentUserName][resource] > 0) {
             playerResources[currentUserName][resource]--;
+            playerResources[currentUserName].total--;
             if (!playerResources[stealer]) {
-                playerResources[stealer] = { lumber: 0, ore: 0, brick: 0, wool: 0, grain: 0 };
+                playerResources[stealer] = createEmptyResourceObj();
             }
             playerResources[stealer][resource] = (playerResources[stealer][resource] || 0) + 1;
+            playerResources[stealer].total++;
             reviewThefts();
             updateTrackerUI();
         }
@@ -573,10 +589,12 @@
         // Subtract from victim, add to current user
         if (playerResources[victim] && playerResources[victim][resource] > 0) {
             playerResources[victim][resource]--;
+            playerResources[victim].total--;
             if (!playerResources[currentUserName]) {
-                playerResources[currentUserName] = { lumber: 0, ore: 0, brick: 0, wool: 0, grain: 0 };
+                playerResources[currentUserName] = createEmptyResourceObj();
             }
             playerResources[currentUserName][resource] = (playerResources[currentUserName][resource] || 0) + 1;
+            playerResources[currentUserName].total++;
             reviewThefts();
             updateTrackerUI();
         }
@@ -597,86 +615,142 @@
         // Find all possible resources the victim could have lost
         const possible = RESOURCE_NAMES.filter(res => (playerResources[victim][res] || 0) > 0);
 
+        // Move the log here, after variables are defined
+        console.log('Adding theft:', { stealer, victim, possible });
+
         if (possible.length === 0) return; // nothing to steal
 
-        // Check for existing unresolved theft between these players
-        let theft = thefts.find(t => !t.solved && t.who.stealer === stealer && t.who.victim === victim);
-
         if (possible.length === 1) {
-            // Only one possible, transfer directly and resolve any existing theft
+            // Only one possible, transfer directly
             transferResource(victim, stealer, possible[0]);
-            if (theft) theft.solved = true;
         } else {
-            // If theft exists, update possible resources
-            if (theft) {
-                // Remove impossible resources
-                for (const res of Object.keys(theft.what)) {
-                    if (!possible.includes(res)) {
-                        delete theft.what[res];
-                    }
-                }
-                // If only one remains after update, resolve
-                const remaining = Object.keys(theft.what);
-                if (remaining.length === 1) {
-                    transferResource(victim, stealer, remaining[0]);
-                    theft.solved = true;
-                }
-            } else {
-                // Record as new unknown theft
-                thefts.push({
-                    who: { stealer, victim },
-                    what: Object.fromEntries(possible.map(res => [res, 1])),
-                    solved: false
-                });
+            // Always add a new theft record for each ambiguous theft
+            thefts.push({
+                who: { stealer, victim },
+                what: Object.fromEntries(possible.map(res => [res, 1])),
+                solved: false
+            });
+        }
+    }
+
+    function getPossibleTheftLossCount(player, resource) {
+        let possible = 0;
+        for (const theft of thefts) {
+            if (!theft.solved && theft.who.victim === player && theft.what[resource]) {
+                possible += theft.what[resource];
             }
         }
+        // Cap possible loss at the actual resource count
+        return Math.min(possible, (playerResources[player]?.[resource] || 0));
     }
 
     // Call this after any resource change to try to resolve unknown thefts
     function reviewThefts() {
-        for (const theft of thefts) {
-            if (theft.solved) continue;
-            const { stealer, victim } = theft.who;
-
-            // Remove impossible resources (victim has 0)
-            const toRemove = [];
-            for (const res of Object.keys(theft.what)) {
-                if ((playerResources[victim]?.[res] || 0) === 0) {
-                    toRemove.push(res);
+        // For each player and resource, try to deduce thefts
+        for (const player of Object.keys(playerResources)) {
+            for (const resourceType of RESOURCE_NAMES) {
+                const resourceCount = playerResources[player][resourceType] || 0;
+                const theftCount = getPossibleTheftLossCount(player, resourceType);
+                const total = resourceCount + theftCount;
+                if (total < -1) {
+                    throw new Error('Invalid state: ' + resourceType + ' ' + player + ' ' + resourceCount + ' ' + theftCount);
                 }
-            }
-            toRemove.forEach(res => delete theft.what[res]);
-
-            // If only one possible resource remains, resolve the theft
-            const possible = Object.keys(theft.what);
-            if (possible.length === 1) {
-                const resource = possible[0];
-                if (playerResources[victim]?.[resource] > 0) {
-                    transferResource(victim, stealer, resource);
-                    theft.solved = true;
-                }
-            } else {
-                // If victim has fewer cards than unresolved thefts, remove this theft
-                const victimTotal = Object.values(playerResources[victim] || {}).reduce((a, b) => a + b, 0);
-                const theftCount = possible.length;
-                if (victimTotal < theftCount) {
-                    theft.solved = true; // Mark as solved (cannot resolve)
+                // The player stole a resource and spent it
+                for (const theft of thefts) {
+                    if (theft.solved) continue;
+                    if (resourceCount === -1 && total === 0 && theft.who.stealingPlayer === player && theft.what[resourceType]) {
+                        transferResource(theft.who.targetPlayer, player, resourceType);
+                        theft.solved = true;
+                    }
+                    // The player had a resource stolen and the stealer spent it
+                    if (resourceCount === 0 && total === -1 && theft.who.targetPlayer === player && theft.what[resourceType]) {
+                        delete theft.what[resourceType];
+                        const remaining = Object.keys(theft.what);
+                        if (remaining.length === 1) {
+                            transferResource(theft.who.targetPlayer, theft.who.stealingPlayer, remaining[0]);
+                            theft.solved = true;
+                        }
+                        break;
+                    }
                 }
             }
         }
-
+        // New logic: If a player has 0 of a resource, remove that resource from any thefts where they are the stealer
+        for (const player of Object.keys(playerResources)) {
+            for (const resourceType of RESOURCE_NAMES) {
+                if ((playerResources[player][resourceType] || 0) === 0) {
+                    for (const theft of thefts) {
+                        if (theft.solved) continue;
+                        if (theft.who.stealingPlayer === player && theft.what[resourceType]) {
+                            delete theft.what[resourceType];
+                            const remaining = Object.keys(theft.what);
+                            if (remaining.length === 1) {
+                                transferResource(theft.who.targetPlayer, theft.who.stealingPlayer, remaining[0]);
+                                theft.solved = true;
+                            }
+                        }
+                    }
+                }
+            }
+        }
+        // Remove impossible resources if none left in play
+        for (const resourceType of RESOURCE_NAMES) {
+            const resourceTotalInPlay = Object.values(playerResources).map(r => r[resourceType] || 0).reduce((a, b) => a + b, 0);
+            if (resourceTotalInPlay === 0) {
+                for (const theft of thefts) {
+                    if (theft.solved) continue;
+                    delete theft.what[resourceType];
+                    const remaining = Object.keys(theft.what);
+                    if (remaining.length === 1) {
+                        transferResource(theft.who.targetPlayer, theft.who.stealingPlayer, remaining[0]);
+                        theft.solved = true;
+                    }
+                }
+            }
+        }
+        // New logic: If a player has only one nonzero resource and an unresolved theft, resolve it
+        for (const theft of thefts) {
+            if (theft.solved) continue;
+            const victim = theft.who.targetPlayer || theft.who.victim;
+            if (!victim || !playerResources[victim]) continue;
+            // Find all nonzero resources for the victim
+            const nonzero = RESOURCE_NAMES.filter(r => (playerResources[victim][r] || 0) > 0 && theft.what[r]);
+            if (nonzero.length === 1) {
+                // Only one possible, resolve it
+                transferResource(victim, theft.who.stealingPlayer || theft.who.stealer, nonzero[0]);
+                theft.solved = true;
+            }
+        }
+        // Final logic: If the sum of actual + possible gains/losses does not match total, resolve ambiguity
+        for (const player of Object.keys(playerResources)) {
+            const actualTotal = RESOURCE_NAMES.reduce((sum, r) => sum + (playerResources[player][r] || 0), 0);
+            let theftsForPlayer = thefts.filter(t => !t.solved && (t.who.targetPlayer === player || t.who.victim === player));
+            if (theftsForPlayer.length === 0) continue;
+            // For each theft, check if only one resource could possibly be the ambiguous card(s)
+            for (const theft of theftsForPlayer) {
+                const possibleResources = Object.keys(theft.what).filter(r => (playerResources[player][r] || 0) > 0);
+                // If only one possible resource and the sum of actual + thefts matches total, resolve
+                if (possibleResources.length === 1) {
+                    transferResource(player, theft.who.stealingPlayer || theft.who.stealer, possibleResources[0]);
+                    theft.solved = true;
+                }
+            }
+        }
         // Remove solved thefts
         thefts = thefts.filter(t => !t.solved);
     }
 
     // Helper to transfer a resource
     function transferResource(from, to, resource) {
-        // log('transferResource', from, to, resource);
-
-        if (!playerResources[from] || !playerResources[to]) return;
-        if (playerResources[from][resource] > 0) {
+        if (!playerResources[from]) return;
+        if (!playerResources[to]) {
+            playerResources[to] = createEmptyResourceObj();
+        }
+        if ((playerResources[from][resource] || 0) > 0) {
             playerResources[from][resource]--;
+            playerResources[from].total--;
             playerResources[to][resource] = (playerResources[to][resource] || 0) + 1;
+            playerResources[to].total++;
             updateTrackerUI();
         }
     }
