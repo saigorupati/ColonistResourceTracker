@@ -10,7 +10,10 @@
 (function () {
     'use strict';
 
-    // Inject Roboto font and custom table styles
+    // --------------------
+    // 1. STYLE INJECTION
+    // --------------------
+    // Inject Roboto font and custom table styles for the tracker UI
     const style = document.createElement('style');
     style.textContent = `
     @import url('https://fonts.googleapis.com/css2?family=Roboto:wght@400;700&display=swap');
@@ -66,9 +69,10 @@
     `;
     document.head.appendChild(style);
 
-    function log(...args) {
-        console.log('[ResourceTracker]', ...args);
-    }
+    // --------------------
+    // 2. GLOBAL VARIABLES
+    // --------------------
+    // Store player colors, resources, and thefts
     let currentUserName = localStorage.getItem('colonistResourceTrackerUser');
     if (!currentUserName) {
         currentUserName = prompt('Enter your Colonist.io username for resource tracking:');
@@ -76,9 +80,7 @@
             localStorage.setItem('colonistResourceTrackerUser', currentUserName);
         }
     }
-
     const playerColors = {}; // { playerName: color }
-
     const initialPlacementDoneMessage = "received starting resources";
     const receivedResourcesSnippet = "got";
     const builtSnippet = "built a";
@@ -88,13 +90,15 @@
     const discardedSnippet = "discarded";
     const tradedWithSnippet = "gave";
     const stoleFromYouSnippet = "from you";
-
     let thefts = [];
-
     const CHAT_CONTAINER_CLASS = 'pJOx4Tg4n9S8O1RM16YT';
     const RESOURCE_NAMES = ['lumber','brick','wool', 'grain', 'ore',];
     const playerResources = {}; // { playerName: { lumber: x, ore: x, ... } }
 
+    // --------------------
+    // 3. UI CREATION
+    // --------------------
+    // Create the toggle button for showing/hiding the tracker
     function createToggleButton() {
         const button = document.createElement('button');
         button.id = 'resource-toggle-btn';
@@ -112,7 +116,6 @@
             cursor: 'pointer',
             fontSize: '12px',
         });
-
         button.onclick = () => {
             const panel = document.getElementById('resource-tracker-panel');
             if (panel.style.display === 'none') {
@@ -123,10 +126,10 @@
                 button.textContent = 'Show Tracker';
             }
         };
-
         document.body.appendChild(button);
     }
 
+    // Create the main tracker panel
     function createTrackerPanel() {
         const panel = document.createElement('div');
         panel.id = 'resource-tracker-panel';
@@ -146,31 +149,26 @@
             minWidth: '200px',
             boxShadow: '0 0 10px rgba(0,0,0,0.5)',
         });
-
         panel.innerHTML = `<strong>Resource Tracker</strong><div id="resource-tracker-content" style="margin-top: 10px;"></div>`;
         document.body.appendChild(panel);
     }
 
+    // Update the tracker UI with the latest resource data
     function updateTrackerUI() {
         const container = document.getElementById('resource-tracker-content');
         if (!container) return;
-
         container.innerHTML = '';
-
         const table = document.createElement('table');
         table.className = 'resource-tbl';
-
         // Header row
         const thead = document.createElement('thead');
         thead.className = 'resource-tbl-header';
         const headerRow = document.createElement('tr');
-
         // Player column header
         const nameHeader = document.createElement('th');
         nameHeader.className = 'resource-tbl-cell resource-tbl-player-col-header';
         nameHeader.textContent = 'Player';
         headerRow.appendChild(nameHeader);
-
         // Resource headers
         RESOURCE_NAMES.forEach(res => {
             const th = document.createElement('th');
@@ -182,42 +180,43 @@
             th.appendChild(img);
             headerRow.appendChild(th);
         });
+        // Add Total header
+        const totalHeader = document.createElement('th');
+        totalHeader.className = 'resource-tbl-cell';
+        totalHeader.textContent = 'Total';
+        headerRow.appendChild(totalHeader);
         thead.appendChild(headerRow);
         table.appendChild(thead);
-
         // Body rows
         const tbody = document.createElement('tbody');
         Object.entries(playerResources).forEach(([player, resources]) => {
             const row = document.createElement('tr');
             row.className = 'resource-tbl-row';
-
             // Player cell with color bar and name
             const nameCell = document.createElement('td');
             nameCell.className = 'resource-tbl-cell';
             const playerColCell = document.createElement('div');
             playerColCell.className = 'resource-tbl-player-col-cell';
-
             // Color bar
             const colorBar = document.createElement('span');
             colorBar.className = 'resource-tbl-player-col-cell-color';
             colorBar.style.backgroundColor = playerColors[player] || '#000';
             playerColCell.appendChild(colorBar);
-
             // Player name
             const nameSpan = document.createElement('span');
             nameSpan.style.color = playerColors[player] || '#000';
             nameSpan.className = 'resource-tbl-player-name';
             nameSpan.textContent = player;
             playerColCell.appendChild(nameSpan);
-
             nameCell.appendChild(playerColCell);
             row.appendChild(nameCell);
-
             // Resource cells
+            let total = 0;
             RESOURCE_NAMES.forEach(res => {
                 const td = document.createElement('td');
                 td.className = 'resource-tbl-cell';
                 const actual = resources[res] || 0;
+                total += actual;
                 const possibleGain = getPossibleTheftCount(player, res);
                 const possibleLoss = getPossibleTheftLossCount(player, res);
                 let text = `${Math.max(0, actual)}`;
@@ -226,19 +225,27 @@
                 td.textContent = text;
                 row.appendChild(td);
             });
+            // Add total cell
+            const totalCell = document.createElement('td');
+            totalCell.className = 'resource-tbl-cell';
+            totalCell.textContent = total;
+            row.appendChild(totalCell);
             tbody.appendChild(row);
         });
         table.appendChild(tbody);
-
         container.appendChild(table);
     }
 
 
+    // --------------------
+    // 4. RESOURCE MANAGEMENT
+    // --------------------
+    // Create an empty resource object
     function createEmptyResourceObj() {
         return { lumber: 0, ore: 0, brick: 0, wool: 0, grain: 0, total: 0 };
     }
 
-
+    // Add resources to a player's total
     function addResources(player, resourceList) {
         if (!playerResources[player]) {
             playerResources[player] = createEmptyResourceObj();
@@ -254,6 +261,7 @@
         updateTrackerUI();
     }
 
+    // Remove resources from a player's total
     function removeResources(player, resourceCosts) {
         if (!playerResources[player]) return;
         Object.entries(resourceCosts).forEach(([res, count]) => {
@@ -268,6 +276,11 @@
         updateTrackerUI();
     }
 
+
+    // --------------------
+    // 5. CHAT MESSAGE HANDLING
+    // --------------------
+    // Setup an observer for new chat messages
     function setupObserver() {
         const chatContainer = document.querySelector(`div.${CHAT_CONTAINER_CLASS}`);
         if (!chatContainer) {
@@ -289,12 +302,14 @@
         console.log("Resource tracker initialized.");
     }
 
+    // Clean and normalize player names
     function cleanPlayerName(raw) {
         return raw
             ? raw.trim().replace(/[\s:]+$/, '')
             : "Unknown";
     }
 
+    // Parse initial placement messages to set up players and resources
     function parseInitialPlacement(msg) {
         if (!msg.textContent.includes(initialPlacementDoneMessage)) return;
 
@@ -323,6 +338,7 @@
         }
     }
 
+    // Parse received resources messages
     function parseReceivedResources(msg) {
         if (!msg.textContent.includes(receivedResourcesSnippet)) return;
         if (msg.textContent.includes("gave")) return; // Ignore trades
@@ -342,6 +358,7 @@
         }
     }
 
+    // Parse building messages (cities, roads, settlements)
     function parseBuilt(msg) {
         if (!msg.textContent.includes(builtSnippet)) return;
 
@@ -366,6 +383,7 @@
         reviewThefts();
     }
 
+    // Parse development card purchase messages
     function parseBought(msg) {
         if (!msg.textContent.includes(boughtSnippet)) return;
 
@@ -382,6 +400,7 @@
         reviewThefts();
     }
 
+    // Parse trade with bank messages
     function parseTradeBank(msg) {
         if (!msg.textContent.includes(tradeBankGaveSnippet) || !msg.textContent.includes(tradeBankTookSnippet)) return;
 
@@ -431,44 +450,82 @@
         reviewThefts();
     }
 
+    // Parse monopoly card messages (steal resources)
     function parseStoleAllOf(msg) {
-        // Only handle monopoly card: "stole <number> <resource>"
-        const regex = /(.+?) stole (\d+) (\w+)/i;
-        const text = msg.textContent;
-        const match = text.match(regex);
-        if (!match) return;
+        // Handle monopoly card: "<player> stole <number> <resource>" or with <img alt="resource">
+        let text = msg.textContent;
+        let playerName, amount, resource;
+        // Try to match the original text format
+        let match = text.match(/(.+?) stole (\d+) (\w+)/i);
+        if (match) {
+            playerName = match[1].trim();
+            amount = parseInt(match[2], 10);
+            resource = match[3].toLowerCase();
+            console.log('[parseStoleAllOf] matched text:', { playerName, amount, resource });
+        } else {
+            // Try to match the format with an <img> tag for the resource
+            const span = msg.querySelector('span');
+            console.log('[parseStoleAllOf] span:', span);
+            if (span) {
+                const img = span.querySelector('img[alt]');
+                console.log('[parseStoleAllOf] img:', img);
+                if (img) {
+                    resource = img.getAttribute('alt').toLowerCase();
+                    const beforeImg = span.textContent.match(/(.+?) stole (\d+)/i);
+                    if (beforeImg) {
+                        playerName = beforeImg[1].trim();
+                        amount = parseInt(beforeImg[2], 10);
+                        console.log('[parseStoleAllOf] matched img:', { playerName, amount, resource });
+                    }
+                }
+            }
+        }
+        console.log('[parseStoleAllOf] final values:', { playerName, amount, resource });
+        if (!RESOURCE_NAMES.includes(resource) || !playerName || isNaN(amount)) {
+            console.warn('[parseStoleAllOf] invalid monopoly event:', { playerName, amount, resource });
+            return;
+        }
 
-        const playerName = match[1].trim();
-        const amount = parseInt(match[2], 10);
-        const resource = match[3].toLowerCase();
-
-        if (!RESOURCE_NAMES.includes(resource) || !playerName || isNaN(amount)) return;
-
-        // Mark as solved any unresolved thefts involving this resource
+        // --- IMPROVED LOGIC: resolve all unresolved thefts for this resource ---
+        // For each unresolved theft where the victim lost this resource, resolve it as this resource
+        console.log('[parseStoleAllOf] thefts before resolving:', JSON.parse(JSON.stringify(thefts)));
         thefts.forEach(theft => {
-            if (!theft.solved && theft.what[resource]) {
+            if (!theft.solved && theft.what[resource] > 0 && playerResources[theft.victim][resource] > 0) {
+                console.log('[parseStoleAllOf] resolving theft:', theft);
+                playerResources[theft.victim][resource]--;
+                playerResources[theft.victim].total--;
+                if (!playerResources[theft.stealer]) playerResources[theft.stealer] = createEmptyResourceObj();
+                playerResources[theft.stealer][resource] = (playerResources[theft.stealer][resource] || 0) + 1;
+                playerResources[theft.stealer].total++;
                 theft.solved = true;
             }
         });
+        console.log('[parseStoleAllOf] thefts after resolving:', JSON.parse(JSON.stringify(thefts)));
+        console.log('[parseStoleAllOf] playerResources before monopoly:', JSON.parse(JSON.stringify(playerResources)));
 
-        // Subtract all of this resource from all other players
+        // Subtract all of this resource from all other players and count total taken
+        let totalTaken = 0;
         Object.keys(playerResources).forEach(otherPlayer => {
             if (otherPlayer !== playerName) {
-                playerResources[otherPlayer].total -= playerResources[otherPlayer][resource];
+                const taken = playerResources[otherPlayer][resource] || 0;
+                totalTaken += taken;
+                playerResources[otherPlayer].total -= taken;
                 if (playerResources[otherPlayer].total < 0) playerResources[otherPlayer].total = 0;
                 playerResources[otherPlayer][resource] = 0;
+                console.log(`[parseStoleAllOf] ${otherPlayer} lost ${taken} ${resource}`);
             }
         });
         if (!playerResources[playerName]) {
             playerResources[playerName] = createEmptyResourceObj();
         }
+        // Add the actual amount shown in the message (should match totalTaken, but use message for robustness)
         playerResources[playerName][resource] = (playerResources[playerName][resource] || 0) + amount;
-        playerResources[playerName].total += amount;
-
-        reviewThefts();
+        playerResources[playerName].total = RESOURCE_NAMES.reduce((sum, res) => sum + (playerResources[playerName][res] || 0), 0);
+        console.log('[parseStoleAllOf] playerResources after monopoly:', JSON.parse(JSON.stringify(playerResources)));
         updateTrackerUI();
     }
 
+    // Parse discarded resources messages
     function parseDiscarded(msg) {
         if (!msg.textContent.includes(discardedSnippet)) return;
 
@@ -494,6 +551,7 @@
         reviewThefts();
     }
 
+    // Parse trade messages between players
     function parseTradeWith(msg) {
         if (!msg.textContent.includes(tradedWithSnippet) || !msg.textContent.includes("and got") || !msg.textContent.includes("from")) return;
 
@@ -542,6 +600,7 @@
         reviewThefts();
     }
 
+    // Parse messages where resources are stolen from the current user
     function parseStoleFromYou(msg) {
         if (!msg.textContent.includes(stoleFromYouSnippet)) return;
         // log('parseStoleFromYou', msg.textContent);
@@ -600,170 +659,96 @@
         }
     }
 
+    // Parse generic steal messages
     function parseStoleFrom(msg) {
         if (msg.textContent.includes(stoleFromYouSnippet)) return;
         if (!msg.textContent.includes("stole") || !msg.textContent.includes("from")) return;
 
-        // Get both usernames from inner spans
-        const innerSpans = msg.querySelectorAll('span span');
+        // Example: <span><span style="font-weight:600;word-break:break-all;color:#223697">Sal</span> stole <img ...> from <span style="font-weight:600;word-break:break-all;color:#E09742">Malti</span></span>
+        const span = msg.querySelector('span');
+        if (!span) return;
+        const innerSpans = span.querySelectorAll('span');
         if (innerSpans.length < 2) return;
         const stealer = cleanPlayerName(innerSpans[0].innerText);
         const victim = cleanPlayerName(innerSpans[1].innerText);
-
+        // Only track if both are not the current user
+        if (!stealer || !victim || stealer === currentUserName || victim === currentUserName) return;
+        // Only track if both exist in playerResources
         if (!playerResources[stealer] || !playerResources[victim]) return;
-
-        // Find all possible resources the victim could have lost
-        const possible = RESOURCE_NAMES.filter(res => (playerResources[victim][res] || 0) > 0);
-
-        // Move the log here, after variables are defined
-        console.log('Adding theft:', { stealer, victim, possible });
-
-        if (possible.length === 0) return; // nothing to steal
-
-        if (possible.length === 1) {
-            // Only one possible, transfer directly
-            transferResource(victim, stealer, possible[0]);
-        } else {
-            // Always add a new theft record for each ambiguous theft
-            thefts.push({
-                who: { stealer, victim },
-                what: Object.fromEntries(possible.map(res => [res, 1])),
-                solved: false
-            });
-        }
+        // Get the resource (should be card back, so unknown)
+        const img = span.querySelector('img');
+        const resource = img ? img.alt?.toLowerCase() : null;
+        // Only track if resource is unknown (card back)
+        if (resource && RESOURCE_NAMES.includes(resource)) return; // If resource is known, handled elsewhere
+        // Take a snapshot of victim's resources at this time
+        const what = {};
+        RESOURCE_NAMES.forEach(res => what[res] = playerResources[victim][res] || 0);
+        thefts.push({ stealer, victim, what, solved: false });
     }
 
+    // Get the count of possible theft losses for a player/resource
     function getPossibleTheftLossCount(player, resource) {
         let possible = 0;
-        for (const theft of thefts) {
-            if (!theft.solved && theft.who.victim === player && theft.what[resource]) {
-                possible += theft.what[resource];
+        thefts.forEach(theft => {
+            if (!theft.solved && theft.victim === player && theft.what[resource] > 0) {
+                possible++;
             }
-        }
-        // Cap possible loss at the actual resource count
-        return Math.min(possible, (playerResources[player]?.[resource] || 0));
-    }
-
-    // Call this after any resource change to try to resolve unknown thefts
-    function reviewThefts() {
-        // For each player and resource, try to deduce thefts
-        for (const player of Object.keys(playerResources)) {
-            for (const resourceType of RESOURCE_NAMES) {
-                const resourceCount = playerResources[player][resourceType] || 0;
-                const theftCount = getPossibleTheftLossCount(player, resourceType);
-                const total = resourceCount + theftCount;
-                if (total < -1) {
-                    throw new Error('Invalid state: ' + resourceType + ' ' + player + ' ' + resourceCount + ' ' + theftCount);
-                }
-                // The player stole a resource and spent it
-                for (const theft of thefts) {
-                    if (theft.solved) continue;
-                    if (resourceCount === -1 && total === 0 && theft.who.stealingPlayer === player && theft.what[resourceType]) {
-                        transferResource(theft.who.targetPlayer, player, resourceType);
-                        theft.solved = true;
-                    }
-                    // The player had a resource stolen and the stealer spent it
-                    if (resourceCount === 0 && total === -1 && theft.who.targetPlayer === player && theft.what[resourceType]) {
-                        delete theft.what[resourceType];
-                        const remaining = Object.keys(theft.what);
-                        if (remaining.length === 1) {
-                            transferResource(theft.who.targetPlayer, theft.who.stealingPlayer, remaining[0]);
-                            theft.solved = true;
-                        }
-                        break;
-                    }
-                }
-            }
-        }
-        // New logic: If a player has 0 of a resource, remove that resource from any thefts where they are the stealer
-        for (const player of Object.keys(playerResources)) {
-            for (const resourceType of RESOURCE_NAMES) {
-                if ((playerResources[player][resourceType] || 0) === 0) {
-                    for (const theft of thefts) {
-                        if (theft.solved) continue;
-                        if (theft.who.stealingPlayer === player && theft.what[resourceType]) {
-                            delete theft.what[resourceType];
-                            const remaining = Object.keys(theft.what);
-                            if (remaining.length === 1) {
-                                transferResource(theft.who.targetPlayer, theft.who.stealingPlayer, remaining[0]);
-                                theft.solved = true;
-                            }
-                        }
-                    }
-                }
-            }
-        }
-        // Remove impossible resources if none left in play
-        for (const resourceType of RESOURCE_NAMES) {
-            const resourceTotalInPlay = Object.values(playerResources).map(r => r[resourceType] || 0).reduce((a, b) => a + b, 0);
-            if (resourceTotalInPlay === 0) {
-                for (const theft of thefts) {
-                    if (theft.solved) continue;
-                    delete theft.what[resourceType];
-                    const remaining = Object.keys(theft.what);
-                    if (remaining.length === 1) {
-                        transferResource(theft.who.targetPlayer, theft.who.stealingPlayer, remaining[0]);
-                        theft.solved = true;
-                    }
-                }
-            }
-        }
-        // New logic: If a player has only one nonzero resource and an unresolved theft, resolve it
-        for (const theft of thefts) {
-            if (theft.solved) continue;
-            const victim = theft.who.targetPlayer || theft.who.victim;
-            if (!victim || !playerResources[victim]) continue;
-            // Find all nonzero resources for the victim
-            const nonzero = RESOURCE_NAMES.filter(r => (playerResources[victim][r] || 0) > 0 && theft.what[r]);
-            if (nonzero.length === 1) {
-                // Only one possible, resolve it
-                transferResource(victim, theft.who.stealingPlayer || theft.who.stealer, nonzero[0]);
-                theft.solved = true;
-            }
-        }
-        // Final logic: If the sum of actual + possible gains/losses does not match total, resolve ambiguity
-        for (const player of Object.keys(playerResources)) {
-            const actualTotal = RESOURCE_NAMES.reduce((sum, r) => sum + (playerResources[player][r] || 0), 0);
-            let theftsForPlayer = thefts.filter(t => !t.solved && (t.who.targetPlayer === player || t.who.victim === player));
-            if (theftsForPlayer.length === 0) continue;
-            // For each theft, check if only one resource could possibly be the ambiguous card(s)
-            for (const theft of theftsForPlayer) {
-                const possibleResources = Object.keys(theft.what).filter(r => (playerResources[player][r] || 0) > 0);
-                // If only one possible resource and the sum of actual + thefts matches total, resolve
-                if (possibleResources.length === 1) {
-                    transferResource(player, theft.who.stealingPlayer || theft.who.stealer, possibleResources[0]);
-                    theft.solved = true;
-                }
-            }
-        }
-        // Remove solved thefts
-        thefts = thefts.filter(t => !t.solved);
-    }
-
-    // Helper to transfer a resource
-    function transferResource(from, to, resource) {
-        if (!playerResources[from]) return;
-        if (!playerResources[to]) {
-            playerResources[to] = createEmptyResourceObj();
-        }
-        if ((playerResources[from][resource] || 0) > 0) {
-            playerResources[from][resource]--;
-            playerResources[from].total--;
-            playerResources[to][resource] = (playerResources[to][resource] || 0) + 1;
-            playerResources[to].total++;
-            updateTrackerUI();
-        }
+        });
+        return possible;
     }
 
     // Returns the number of possible extra resources a player could have for a resource due to unresolved thefts
     function getPossibleTheftCount(player, resource) {
         let possible = 0;
-        for (const theft of thefts) {
-            if (!theft.solved && theft.who.stealer === player && theft.what[resource]) {
-                possible += theft.what[resource];
+        thefts.forEach(theft => {
+            if (!theft.solved && theft.stealer === player && theft.what[resource] > 0) {
+                possible++;
             }
-        }
+        });
         return possible;
+    }
+
+    // Call this after any resource change to try to resolve unknown thefts
+    function reviewThefts() {
+        // Try to resolve thefts if only one possible resource left for a theft
+        thefts.forEach(theft => {
+            if (theft.solved) return;
+            // Edge case: victim has only one resource type but multiple cards of it
+            const possibleResources = RESOURCE_NAMES.filter(res => theft.what[res] > 0);
+            if (possibleResources.length === 1) {
+                const res = possibleResources[0];
+                if (playerResources[theft.victim][res] > 0) {
+                    playerResources[theft.victim][res]--;
+                    playerResources[theft.victim].total--;
+                    if (!playerResources[theft.stealer]) playerResources[theft.stealer] = createEmptyResourceObj();
+                    playerResources[theft.stealer][res] = (playerResources[theft.stealer][res] || 0) + 1;
+                    playerResources[theft.stealer].total++;
+                }
+                theft.solved = true;
+                return;
+            }
+            // Edge case: victim spent or gained resources before theft resolved
+            // If any resource in theft.what is now 0 for victim, remove it from possibleResources
+            let stillPossible = possibleResources.filter(res => playerResources[theft.victim][res] > 0);
+            if (stillPossible.length === 1) {
+                const res = stillPossible[0];
+                playerResources[theft.victim][res]--;
+                playerResources[theft.victim].total--;
+                if (!playerResources[theft.stealer]) playerResources[theft.stealer] = createEmptyResourceObj();
+                playerResources[theft.stealer][res] = (playerResources[theft.stealer][res] || 0) + 1;
+                playerResources[theft.stealer].total++;
+                theft.solved = true;
+                return;
+            }
+            // Edge case: resource counts go negative (should not happen)
+            RESOURCE_NAMES.forEach(res => {
+                if (playerResources[theft.victim][res] < 0) playerResources[theft.victim][res] = 0;
+                if (playerResources[theft.stealer][res] < 0) playerResources[theft.stealer][res] = 0;
+            });
+        });
+        // Remove solved thefts
+        thefts = thefts.filter(t => !t.solved);
+        updateTrackerUI();
     }
 
     // Call all parse functions for each new message
