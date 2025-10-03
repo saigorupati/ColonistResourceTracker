@@ -503,25 +503,60 @@
         console.log('[parseStoleAllOf] thefts after resolving:', JSON.parse(JSON.stringify(thefts)));
         console.log('[parseStoleAllOf] playerResources before monopoly:', JSON.parse(JSON.stringify(playerResources)));
 
-        // Subtract all of this resource from all other players and count total taken
-        let totalTaken = 0;
-        Object.keys(playerResources).forEach(otherPlayer => {
-            if (otherPlayer !== playerName) {
-                const taken = playerResources[otherPlayer][resource] || 0;
-                totalTaken += taken;
-                playerResources[otherPlayer].total -= taken;
-                if (playerResources[otherPlayer].total < 0) playerResources[otherPlayer].total = 0;
-                playerResources[otherPlayer][resource] = 0;
-                console.log(`[parseStoleAllOf] ${otherPlayer} lost ${taken} ${resource}`);
-            }
-        });
+        // Ensure monopoly player exists in playerResources
         if (!playerResources[playerName]) {
             playerResources[playerName] = createEmptyResourceObj();
         }
-        // Add the actual amount shown in the message (should match totalTaken, but use message for robustness)
-        playerResources[playerName][resource] = (playerResources[playerName][resource] || 0) + amount;
-        playerResources[playerName].total = RESOURCE_NAMES.reduce((sum, res) => sum + (playerResources[playerName][res] || 0), 0);
+
+        // Calculate total resources taken from all other players
+        let totalTaken = 0;
+        const playersAffected = [];
+        
+        // First pass: calculate total and track affected players
+        Object.keys(playerResources).forEach(otherPlayer => {
+            if (otherPlayer !== playerName) {
+                const currentAmount = playerResources[otherPlayer][resource] || 0;
+                if (currentAmount > 0) {
+                    totalTaken += currentAmount;
+                    playersAffected.push({
+                        player: otherPlayer,
+                        amount: currentAmount
+                    });
+                }
+            }
+        });
+
+        // Second pass: remove resources from affected players and recalculate totals properly
+        playersAffected.forEach(({ player, amount }) => {
+            // Remove the specific resource
+            playerResources[player][resource] = 0;
+            
+            // Recalculate total from scratch to avoid accumulation errors
+            playerResources[player].total = RESOURCE_NAMES.reduce((sum, res) => {
+                return sum + (playerResources[player][res] || 0);
+            }, 0);
+            
+            console.log(`[parseStoleAllOf] ${player} lost ${amount} ${resource}, new total: ${playerResources[player].total}`);
+        });
+
+        // Add resources to monopoly player
+        // Use the actual calculated total taken for accuracy, but validate against message amount
+        const finalAmount = Math.max(totalTaken, amount); // Use whichever is higher for robustness
+        playerResources[playerName][resource] = (playerResources[playerName][resource] || 0) + finalAmount;
+        
+        // Recalculate monopoly player's total from scratch
+        playerResources[playerName].total = RESOURCE_NAMES.reduce((sum, res) => {
+            return sum + (playerResources[playerName][res] || 0);
+        }, 0);
+
+        // Log discrepancy if message amount doesn't match calculated amount
+        if (totalTaken !== amount) {
+            console.warn(`[parseStoleAllOf] Discrepancy detected: calculated ${totalTaken} but message shows ${amount}. Using ${finalAmount}.`);
+        }
+
         console.log('[parseStoleAllOf] playerResources after monopoly:', JSON.parse(JSON.stringify(playerResources)));
+        console.log(`[parseStoleAllOf] Monopoly summary: ${playerName} gained ${finalAmount} ${resource} from ${playersAffected.length} players`);
+        
         updateTrackerUI();
     }
 
