@@ -126,7 +126,6 @@
     const FEED_MESSAGE_SELECTOR = '[class*="feedMessage-"]';
     const MESSAGE_PART_SELECTOR = '[class*="messagePart-"]';
     const SCROLL_ITEM_SELECTOR = '[class*="scrollItemContainer-"]';
-    const SCROLLER_SELECTOR = '[class*="virtualScroller-"]';
     const USERNAME_SPAN_SELECTOR = 'span[style*="color"]';
     const RESOURCE_NAMES = ['lumber','brick','wool', 'grain', 'ore',];
     const playerResources = {}; // { playerName: { lumber: x, ore: x, ... } }
@@ -369,23 +368,26 @@
     // mutations at several tree levels) and once by feed position (the
     // virtual scroller destroys and recreates rows as the user scrolls).
     const processedMessages = new WeakSet();
-    const seenFeedIndices = new WeakMap(); // scroller element -> Set of data-index values
+    // data-index is assigned once per feed item and stays stable for the life
+    // of the game, so dedupe on it globally. The previous WeakMap keyed by the
+    // scroller element broke on scroll: the virtual scroller destroys and
+    // recreates rows, and each recreated element started with an empty seen-set,
+    // so already-counted messages (e.g. "got"/received) were added again and
+    // every player's totals crept upward.
+    const seenFeedIndices = new Set();
 
     function isDuplicateMessage(msg) {
+        const item = msg.closest(SCROLL_ITEM_SELECTOR);
+        const index = item ? item.getAttribute('data-index') : null;
+        if (index !== null) {
+            if (seenFeedIndices.has(index)) return true;
+            seenFeedIndices.add(index);
+            return false;
+        }
+        // No feed index (rare) — fall back to element identity so a node that
+        // fires several mutations at once is still only processed once.
         if (processedMessages.has(msg)) return true;
         processedMessages.add(msg);
-        const item = msg.closest(SCROLL_ITEM_SELECTOR);
-        const scroller = item ? item.closest(SCROLLER_SELECTOR) : null;
-        const index = item ? item.getAttribute('data-index') : null;
-        if (scroller && index !== null) {
-            let seen = seenFeedIndices.get(scroller);
-            if (!seen) {
-                seen = new Set();
-                seenFeedIndices.set(scroller, seen);
-            }
-            if (seen.has(index)) return true;
-            seen.add(index);
-        }
         return false;
     }
 
