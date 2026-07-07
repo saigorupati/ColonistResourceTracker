@@ -811,13 +811,25 @@
         const what = {};
         RESOURCE_NAMES.forEach(res => what[res] = playerResources[victim][res] || 0);
         thefts.push({ stealer, victim, what, solved: false });
+        // Resolve immediately if already determinate and render the +1?/-1?
+        // hints now, rather than waiting for the next game event to redraw.
+        reviewThefts();
+    }
+
+    // A resource is still a candidate for an unresolved theft only if the
+    // snapshot had it AND the victim still holds at least one (same test Rule 2
+    // uses to rule candidates out). Narrowing here keeps the +n?/-n? hints in
+    // sync with the evidence instead of stuck on the frozen snapshot.
+    function isTheftCandidate(theft, resource) {
+        return !theft.solved && theft.what[resource] > 0 &&
+            playerResources[theft.victim] && playerResources[theft.victim][resource] > 0;
     }
 
     // Get the count of possible theft losses for a player/resource
     function getPossibleTheftLossCount(player, resource) {
         let possible = 0;
         thefts.forEach(theft => {
-            if (!theft.solved && theft.victim === player && theft.what[resource] > 0) {
+            if (theft.victim === player && isTheftCandidate(theft, resource)) {
                 possible++;
             }
         });
@@ -828,7 +840,7 @@
     function getPossibleTheftCount(player, resource) {
         let possible = 0;
         thefts.forEach(theft => {
-            if (!theft.solved && theft.stealer === player && theft.what[resource] > 0) {
+            if (theft.stealer === player && isTheftCandidate(theft, resource)) {
                 possible++;
             }
         });
@@ -848,13 +860,16 @@
             const possibleResources = RESOURCE_NAMES.filter(res => theft.what[res] > 0);
             if (possibleResources.length === 1) {
                 const res = possibleResources[0];
+                // The stolen card is certainly `res`, so the stealer definitely
+                // gained one — credit it even if the victim's tracked count has
+                // drifted to 0. Only decrement the victim when we actually can.
                 if (playerResources[theft.victim][res] > 0) {
                     playerResources[theft.victim][res]--;
                     playerResources[theft.victim].total--;
-                    if (!playerResources[theft.stealer]) playerResources[theft.stealer] = createEmptyResourceObj();
-                    playerResources[theft.stealer][res] = (playerResources[theft.stealer][res] || 0) + 1;
-                    playerResources[theft.stealer].total++;
                 }
+                if (!playerResources[theft.stealer]) playerResources[theft.stealer] = createEmptyResourceObj();
+                playerResources[theft.stealer][res] = (playerResources[theft.stealer][res] || 0) + 1;
+                playerResources[theft.stealer].total++;
                 theft.solved = true;
                 return;
             }
