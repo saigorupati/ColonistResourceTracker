@@ -1,7 +1,7 @@
-// ==UserScript==
+﻿// ==UserScript==
 // @name         Colonist.io Resource Tracker with Toggle
 // @namespace    http://tampermonkey.net/
-// @version      1.0
+// @version      1.2
 // @description  Track each player's resources with a toggleable panel
 // @match        https://colonist.io/*
 // @grant        none
@@ -16,56 +16,86 @@
     // Inject Roboto font and custom table styles for the tracker UI
     const style = document.createElement('style');
     style.textContent = `
-    @import url('https://fonts.googleapis.com/css2?family=Roboto:wght@400;700&display=swap');
-    * { font-family: 'Roboto', sans-serif !important; }
-    #resource-tracker-panel { background: #fff; }
-    .resource-tbl { position: relative; background: #fff; border: none; width: 100%; border-collapse: collapse; }
-    .resource-tbl-header { border: none; }
-    .resource-tbl-header .resource-tbl-cell { padding: 4px 7px 2px; }
-    .resource-tbl-row { border: none; height: 3em; }
-    .resource-tbl-row:nth-child(2n-1) { background-color: #eeeeee; }
-    .resource-tbl-row:nth-child(2n) { background-color: #f9f9f9; }
-    .resource-tbl-cell {
-        border: none;
-        box-sizing: unset;
-        padding: 0 2px;
-        text-align: center;
-        line-height: normal;
-        vertical-align: middle;
+    @import url('https://fonts.googleapis.com/css2?family=Roboto:wght@400;500;700&display=swap');
+    #resource-tracker-panel, #resource-tracker-panel * { font-family: 'Roboto', sans-serif; box-sizing: border-box; }
+    #resource-tracker-panel {
+        position: fixed;
+        top: 40px;
+        left: 20px;
+        z-index: 9999;
+        background: rgba(22, 25, 32, 0.94);
+        color: #e9ecf1;
+        border: 1px solid rgba(255, 255, 255, 0.08);
+        border-radius: 10px;
+        box-shadow: 0 6px 24px rgba(0, 0, 0, 0.45);
+        font-size: 13px;
+        min-width: 240px;
+        max-height: 80vh;
+        overflow: hidden;
+        user-select: none;
+        backdrop-filter: blur(6px);
     }
-    .resource-tbl-row > .resource-tbl-cell:first-child { text-align: left; }
-    .resource-tbl-player-col-cell {
-        border: none;
-        display: inline-flex;
-        padding: 0;
-        align-items: center; 
-        text-align: left;
-        line-height: normal;
-        height: 100%;
+    #resource-tracker-header {
+        display: flex;
+        align-items: center;
+        gap: 6px;
+        padding: 7px 8px 7px 12px;
+        cursor: grab;
+        background: rgba(255, 255, 255, 0.05);
+        border-bottom: 1px solid rgba(255, 255, 255, 0.07);
+        font-weight: 700;
+        letter-spacing: 0.3px;
     }
+    #resource-tracker-header:active { cursor: grabbing; }
+    #resource-tracker-collapse {
+        margin-left: auto;
+        border: none;
+        background: transparent;
+        color: #9aa3b2;
+        cursor: pointer;
+        font-size: 13px;
+        line-height: 1;
+        padding: 3px 6px;
+        border-radius: 5px;
+    }
+    #resource-tracker-collapse:hover { background: rgba(255, 255, 255, 0.1); color: #fff; }
+    #resource-tracker-content {
+        overflow-y: auto;
+        max-height: calc(80vh - 34px);
+        padding: 6px 8px 8px;
+    }
+    #resource-tracker-empty { color: #8b93a3; font-size: 12px; padding: 6px 4px; }
+    .resource-tbl { width: 100%; border-collapse: collapse; }
+    .resource-tbl th { padding: 2px 4px 6px; font-weight: 500; text-align: center; }
+    .resource-tbl-resource-icon { width: 17px; height: 24px; vertical-align: middle; }
+    .resource-tbl-resource-emoji { font-size: 15px; }
+    .resource-tbl-total-header { font-size: 11px; color: #9aa3b2; }
+    .resource-tbl-row td { padding: 5px 4px; text-align: center; vertical-align: middle; }
+    .resource-tbl-row:nth-child(2n-1) td { background: rgba(255, 255, 255, 0.045); }
+    .resource-tbl-row td:first-child { border-radius: 6px 0 0 6px; text-align: left; }
+    .resource-tbl-row td:last-child { border-radius: 0 6px 6px 0; font-weight: 700; }
+    .resource-tbl-row-you td { background: rgba(255, 214, 90, 0.09) !important; }
+    .resource-tbl-player-col-cell { display: flex; align-items: center; min-width: 0; }
     .resource-tbl-player-col-cell-color {
-        width: 6px;
-        min-height: 3em;
-        height: 100%;
-        background-color: #000;
-        display: inline-block;
+        width: 4px;
+        height: 16px;
         border-radius: 2px;
-        align-self: stretch;
+        flex: none;
+        border: 1px solid rgba(255, 255, 255, 0.25);
     }
     .resource-tbl-player-name {
-        margin: 0 10px 0 4px;
-        font-weight: bold;
-        text-align: left;
+        margin-left: 6px;
+        font-weight: 700;
+        max-width: 100px;
+        overflow: hidden;
+        text-overflow: ellipsis;
+        white-space: nowrap;
     }
-    .resource-tbl-player-col-header {
-        font-weight: 600;
-        text-transform: uppercase;
-        border: none;
-        padding-left: 10px;
-        font-size: 85%;
-        text-align: left;
-    }
-    .resource-tbl-resource-icon { width: 24px; height: 36px; }
+    .resource-tbl-count { font-weight: 500; }
+    .resource-tbl-count-zero { color: #6d7585; }
+    .resource-tbl-hint { display: block; font-size: 10px; line-height: 1.2; }
+    .resource-tbl-hint-gain { color: #7fd188; }
+    .resource-tbl-hint-loss { color: #e08585; }
     `;
     document.head.appendChild(style);
 
@@ -91,66 +121,94 @@
     const tradedWithSnippet = "gave";
     const stoleFromYouSnippet = "from you";
     let thefts = [];
-    const CHAT_CONTAINER_CLASS = 'pJOx4Tg4n9S8O1RM16YT';
+    // Colonist class names are "<prefix>-<build hash>" (e.g. feedMessage-O8TLknGe);
+    // the hash changes every build, so match on the stable prefix only.
+    const FEED_MESSAGE_SELECTOR = '[class*="feedMessage-"]';
+    const MESSAGE_PART_SELECTOR = '[class*="messagePart-"]';
+    const SCROLL_ITEM_SELECTOR = '[class*="scrollItemContainer-"]';
+    const SCROLLER_SELECTOR = '[class*="virtualScroller-"]';
+    const USERNAME_SPAN_SELECTOR = 'span[style*="color"]';
     const RESOURCE_NAMES = ['lumber','brick','wool', 'grain', 'ore',];
     const playerResources = {}; // { playerName: { lumber: x, ore: x, ... } }
+    // Colonist's card icon URLs are content-hashed and change per build, so
+    // they can't be hardcoded; harvest them from feed messages as they appear
+    // and fall back to emoji until then.
+    const RESOURCE_EMOJI = { lumber: '\u{1FAB5}', brick: '\u{1F9F1}', wool: '\u{1F411}', grain: '\u{1F33E}', ore: '\u{1FAA8}' };
+    const ICONS_KEY = 'colonistResourceTrackerIcons';
+    const POS_KEY = 'colonistResourceTrackerPos';
+    const COLLAPSE_KEY = 'colonistResourceTrackerCollapsed';
+    let resourceIconUrls = {};
+    try {
+        resourceIconUrls = JSON.parse(localStorage.getItem(ICONS_KEY)) || {};
+    } catch (e) {
+        resourceIconUrls = {};
+    }
 
     // --------------------
     // 3. UI CREATION
     // --------------------
-    // Create the toggle button for showing/hiding the tracker
-    function createToggleButton() {
-        const button = document.createElement('button');
-        button.id = 'resource-toggle-btn';
-        button.textContent = 'Hide Tracker';
-        Object.assign(button.style, {
-            position: 'fixed',
-            top: '10px',
-            left: '230px',
-            zIndex: 9999,
-            padding: '5px 10px',
-            background: '#444',
-            color: '#fff',
-            border: 'none',
-            borderRadius: '5px',
-            cursor: 'pointer',
-            fontSize: '12px',
+    // Let the user drag the panel around by its header; position is saved
+    function makeDraggable(panel, handle) {
+        let startX, startY, startLeft, startTop, dragging = false;
+        handle.addEventListener('mousedown', e => {
+            if (e.target.id === 'resource-tracker-collapse') return;
+            dragging = true;
+            startX = e.clientX;
+            startY = e.clientY;
+            const rect = panel.getBoundingClientRect();
+            startLeft = rect.left;
+            startTop = rect.top;
+            e.preventDefault();
         });
-        button.onclick = () => {
-            const panel = document.getElementById('resource-tracker-panel');
-            if (panel.style.display === 'none') {
-                panel.style.display = 'block';
-                button.textContent = 'Hide Tracker';
-            } else {
-                panel.style.display = 'none';
-                button.textContent = 'Show Tracker';
-            }
-        };
-        document.body.appendChild(button);
+        document.addEventListener('mousemove', e => {
+            if (!dragging) return;
+            const left = Math.min(Math.max(0, startLeft + e.clientX - startX), window.innerWidth - 60);
+            const top = Math.min(Math.max(0, startTop + e.clientY - startY), window.innerHeight - 40);
+            panel.style.left = left + 'px';
+            panel.style.top = top + 'px';
+        });
+        document.addEventListener('mouseup', () => {
+            if (!dragging) return;
+            dragging = false;
+            const rect = panel.getBoundingClientRect();
+            localStorage.setItem(POS_KEY, JSON.stringify({ left: rect.left, top: rect.top }));
+        });
     }
 
-    // Create the main tracker panel
+    // Create the main tracker panel with a draggable header and collapse toggle
     function createTrackerPanel() {
         const panel = document.createElement('div');
         panel.id = 'resource-tracker-panel';
-        Object.assign(panel.style, {
-            position: 'fixed',
-            top: '40px',
-            left: '20px',
-            background: '#fff',
-            color: '#000',
-            padding: '10px',
-            borderRadius: '10px',
-            zIndex: 9999,
-            fontFamily: 'Arial, sans-serif',
-            fontSize: '14px',
-            maxHeight: '80vh',
-            overflowY: 'auto',
-            minWidth: '200px',
-            boxShadow: '0 0 10px rgba(0,0,0,0.5)',
-        });
-        panel.innerHTML = `<strong>Resource Tracker</strong><div id="resource-tracker-content" style="margin-top: 10px;"></div>`;
+        panel.innerHTML = `
+            <div id="resource-tracker-header">
+                <span>Resource Tracker</span>
+                <button id="resource-tracker-collapse" title="Collapse">▾</button>
+            </div>
+            <div id="resource-tracker-content"></div>`;
         document.body.appendChild(panel);
+
+        // Restore saved position, clamped to the current viewport
+        try {
+            const pos = JSON.parse(localStorage.getItem(POS_KEY));
+            if (pos) {
+                panel.style.left = Math.min(Math.max(0, pos.left), window.innerWidth - 60) + 'px';
+                panel.style.top = Math.min(Math.max(0, pos.top), window.innerHeight - 40) + 'px';
+            }
+        } catch (e) { /* ignore corrupt saved position */ }
+
+        const content = panel.querySelector('#resource-tracker-content');
+        const collapseBtn = panel.querySelector('#resource-tracker-collapse');
+        const setCollapsed = collapsed => {
+            content.style.display = collapsed ? 'none' : '';
+            collapseBtn.textContent = collapsed ? '▸' : '▾';
+            collapseBtn.title = collapsed ? 'Expand' : 'Collapse';
+            localStorage.setItem(COLLAPSE_KEY, collapsed ? '1' : '');
+        };
+        collapseBtn.onclick = () => setCollapsed(content.style.display !== 'none');
+        if (localStorage.getItem(COLLAPSE_KEY) === '1') setCollapsed(true);
+
+        makeDraggable(panel, panel.querySelector('#resource-tracker-header'));
+        updateTrackerUI();
     }
 
     // Update the tracker UI with the latest resource data
@@ -158,55 +216,69 @@
         const container = document.getElementById('resource-tracker-content');
         if (!container) return;
         container.innerHTML = '';
+
+        const players = Object.entries(playerResources);
+        if (players.length === 0) {
+            const empty = document.createElement('div');
+            empty.id = 'resource-tracker-empty';
+            empty.textContent = 'Waiting for game events…';
+            container.appendChild(empty);
+            return;
+        }
+
         const table = document.createElement('table');
         table.className = 'resource-tbl';
         // Header row
         const thead = document.createElement('thead');
-        thead.className = 'resource-tbl-header';
         const headerRow = document.createElement('tr');
-        // Player column header
-        const nameHeader = document.createElement('th');
-        nameHeader.className = 'resource-tbl-cell resource-tbl-player-col-header';
-        nameHeader.textContent = 'Player';
-        headerRow.appendChild(nameHeader);
-        // Resource headers
+        headerRow.appendChild(document.createElement('th')); // player column
+        // Resource headers: real card icon once seen in the feed, emoji until then
         RESOURCE_NAMES.forEach(res => {
             const th = document.createElement('th');
-            th.className = 'resource-tbl-cell';
-            const img = document.createElement('img');
-            img.src = `https://colonist.io/dist/images/card_${res}.svg`;
-            img.alt = res;
-            img.className = 'resource-tbl-resource-icon';
-            th.appendChild(img);
+            if (resourceIconUrls[res]) {
+                const img = document.createElement('img');
+                img.src = resourceIconUrls[res];
+                img.alt = res;
+                img.title = res;
+                img.className = 'resource-tbl-resource-icon';
+                th.appendChild(img);
+            } else {
+                const span = document.createElement('span');
+                span.className = 'resource-tbl-resource-emoji';
+                span.textContent = RESOURCE_EMOJI[res];
+                span.title = res;
+                th.appendChild(span);
+            }
             headerRow.appendChild(th);
         });
-        // Add Total header
+        // Total header
         const totalHeader = document.createElement('th');
-        totalHeader.className = 'resource-tbl-cell';
-        totalHeader.textContent = 'Total';
+        totalHeader.className = 'resource-tbl-total-header';
+        totalHeader.textContent = 'Σ';
+        totalHeader.title = 'Total';
         headerRow.appendChild(totalHeader);
         thead.appendChild(headerRow);
         table.appendChild(thead);
         // Body rows
         const tbody = document.createElement('tbody');
-        Object.entries(playerResources).forEach(([player, resources]) => {
+        players.forEach(([player, resources]) => {
             const row = document.createElement('tr');
             row.className = 'resource-tbl-row';
+            if (player === currentUserName) row.classList.add('resource-tbl-row-you');
             // Player cell with color bar and name
             const nameCell = document.createElement('td');
-            nameCell.className = 'resource-tbl-cell';
             const playerColCell = document.createElement('div');
             playerColCell.className = 'resource-tbl-player-col-cell';
             // Color bar
             const colorBar = document.createElement('span');
             colorBar.className = 'resource-tbl-player-col-cell-color';
-            colorBar.style.backgroundColor = playerColors[player] || '#000';
+            colorBar.style.backgroundColor = playerColors[player] || '#888';
             playerColCell.appendChild(colorBar);
             // Player name
             const nameSpan = document.createElement('span');
-            nameSpan.style.color = playerColors[player] || '#000';
             nameSpan.className = 'resource-tbl-player-name';
             nameSpan.textContent = player;
+            nameSpan.title = player;
             playerColCell.appendChild(nameSpan);
             nameCell.appendChild(playerColCell);
             row.appendChild(nameCell);
@@ -214,20 +286,33 @@
             let total = 0;
             RESOURCE_NAMES.forEach(res => {
                 const td = document.createElement('td');
-                td.className = 'resource-tbl-cell';
                 const actual = resources[res] || 0;
                 total += actual;
+                const shown = Math.max(0, actual);
+                const countSpan = document.createElement('span');
+                countSpan.className = 'resource-tbl-count' + (shown === 0 ? ' resource-tbl-count-zero' : '');
+                countSpan.textContent = shown;
+                td.appendChild(countSpan);
                 const possibleGain = getPossibleTheftCount(player, res);
                 const possibleLoss = getPossibleTheftLossCount(player, res);
-                let text = `${Math.max(0, actual)}`;
-                if (possibleGain > 0) text += ` (+${possibleGain})`;
-                if (possibleLoss > 0 && actual > 0) text += ` (-${Math.min(possibleLoss, actual)})`;
-                td.textContent = text;
+                if (possibleGain > 0) {
+                    const hint = document.createElement('span');
+                    hint.className = 'resource-tbl-hint resource-tbl-hint-gain';
+                    hint.textContent = `+${possibleGain}?`;
+                    hint.title = 'Possible extra cards from unresolved robber steals';
+                    td.appendChild(hint);
+                }
+                if (possibleLoss > 0 && actual > 0) {
+                    const hint = document.createElement('span');
+                    hint.className = 'resource-tbl-hint resource-tbl-hint-loss';
+                    hint.textContent = `-${Math.min(possibleLoss, actual)}?`;
+                    hint.title = 'Possible cards lost to unresolved robber steals';
+                    td.appendChild(hint);
+                }
                 row.appendChild(td);
             });
             // Add total cell
             const totalCell = document.createElement('td');
-            totalCell.className = 'resource-tbl-cell';
             totalCell.textContent = total;
             row.appendChild(totalCell);
             tbody.appendChild(row);
@@ -280,26 +365,73 @@
     // --------------------
     // 5. CHAT MESSAGE HANDLING
     // --------------------
-    // Setup an observer for new chat messages
+    // Messages processed once by element identity (an insertion can fire
+    // mutations at several tree levels) and once by feed position (the
+    // virtual scroller destroys and recreates rows as the user scrolls).
+    const processedMessages = new WeakSet();
+    const seenFeedIndices = new WeakMap(); // scroller element -> Set of data-index values
+
+    function isDuplicateMessage(msg) {
+        if (processedMessages.has(msg)) return true;
+        processedMessages.add(msg);
+        const item = msg.closest(SCROLL_ITEM_SELECTOR);
+        const scroller = item ? item.closest(SCROLLER_SELECTOR) : null;
+        const index = item ? item.getAttribute('data-index') : null;
+        if (scroller && index !== null) {
+            let seen = seenFeedIndices.get(scroller);
+            if (!seen) {
+                seen = new Set();
+                seenFeedIndices.set(scroller, seen);
+            }
+            if (seen.has(index)) return true;
+            seen.add(index);
+        }
+        return false;
+    }
+
+    function processMessage(msg) {
+        if (isDuplicateMessage(msg)) return;
+        handleNewChatMessage(msg);
+    }
+
+    // Setup an observer for new chat messages. The feed container's class
+    // hash changes between builds, so observe the whole body and filter for
+    // feed messages instead of depending on a specific container class.
     function setupObserver() {
-        const chatContainer = document.querySelector(`div.${CHAT_CONTAINER_CLASS}`);
-        if (!chatContainer) {
+        if (!document.body) {
             setTimeout(setupObserver, 1000);
             return;
         }
 
+        // Process messages already in the DOM (e.g. script loaded mid-game)
+        document.querySelectorAll(FEED_MESSAGE_SELECTOR).forEach(processMessage);
+
         const observer = new MutationObserver(mutations => {
             for (const mutation of mutations) {
                 mutation.addedNodes.forEach(node => {
-                    if (node.nodeType === Node.ELEMENT_NODE) {
-                        handleNewChatMessage(node);
-                    }
+                    if (node.nodeType !== Node.ELEMENT_NODE) return;
+                    if (node.matches(FEED_MESSAGE_SELECTOR)) processMessage(node);
+                    node.querySelectorAll(FEED_MESSAGE_SELECTOR).forEach(processMessage);
                 });
             }
         });
 
-        observer.observe(chatContainer, { childList: true, subtree: true });
+        observer.observe(document.body, { childList: true, subtree: true });
         console.log("Resource tracker initialized.");
+    }
+
+    // The message text lives in a messagePart span next to the avatar image;
+    // scoping all queries to it keeps avatar <img alt="bot"> etc. out of parsing.
+    function getMessagePart(msg) {
+        if (msg.matches(MESSAGE_PART_SELECTOR)) return msg;
+        return msg.querySelector(MESSAGE_PART_SELECTOR);
+    }
+
+    // Get resource names from img alt attributes within an element
+    function getResourceAlts(root) {
+        return Array.from(root.querySelectorAll('img'))
+            .map(img => img.alt ? img.alt.toLowerCase() : '')
+            .filter(alt => RESOURCE_NAMES.includes(alt));
     }
 
     // Clean and normalize player names
@@ -309,29 +441,44 @@
             : "Unknown";
     }
 
-    // Parse initial placement messages to set up players and resources
-    function parseInitialPlacement(msg) {
-        if (!msg.textContent.includes(initialPlacementDoneMessage)) return;
+    // Every feed message renders usernames as colored spans, so learn player
+    // colors from any message rather than only the starting-resources one.
+    function registerPlayerColors(part) {
+        part.querySelectorAll(USERNAME_SPAN_SELECTOR).forEach(span => {
+            const name = cleanPlayerName(span.textContent);
+            if (!name || name === "Unknown") return;
+            const colorMatch = span.getAttribute('style').match(/color:\s*(#[0-9A-Fa-f]{6}|#[0-9A-Fa-f]{3}|rgba?\([^)]+\))/);
+            if (colorMatch) {
+                playerColors[name] = colorMatch[1];
+            }
+        });
+    }
 
-        // Find the inner span with the color style
-        const usernameSpan = msg.querySelector('span span[style*="color"]');
-        let playerName = cleanPlayerName(usernameSpan ? usernameSpan.innerText : "");
+    // Cache resource card icon URLs from feed messages for the panel header
+    function captureResourceIcons(part) {
+        let changed = false;
+        part.querySelectorAll('img').forEach(img => {
+            const alt = img.alt ? img.alt.toLowerCase() : '';
+            if (RESOURCE_NAMES.includes(alt) && resourceIconUrls[alt] !== img.src) {
+                resourceIconUrls[alt] = img.src;
+                changed = true;
+            }
+        });
+        if (changed) {
+            localStorage.setItem(ICONS_KEY, JSON.stringify(resourceIconUrls));
+            updateTrackerUI();
+        }
+    }
+
+    // Parse initial placement messages to set up players and resources
+    function parseInitialPlacement(part) {
+        if (!part.textContent.includes(initialPlacementDoneMessage)) return;
+
+        const usernameSpan = part.querySelector(USERNAME_SPAN_SELECTOR);
+        let playerName = cleanPlayerName(usernameSpan ? usernameSpan.textContent : "");
         playerName = playerName.replace(/ received starting resources$/i, '');
 
-        // Extract color from style attribute using regex
-        if (usernameSpan && usernameSpan.getAttribute('style')) {
-            const style = usernameSpan.getAttribute('style');
-            const colorMatch = style.match(/color:\s*(#[0-9A-Fa-f]{6}|#[0-9A-Fa-f]{3}|rgba?\([^)]+\))/);
-            if (colorMatch) {
-                playerColors[playerName] = colorMatch[1];
-            }
-        }
-
-        // Get resources from img alt attributes
-        const imgs = msg.querySelectorAll('img');
-        const resourceList = Array.from(imgs)
-            .map(img => img.alt?.toLowerCase())
-            .filter(alt => RESOURCE_NAMES.includes(alt));
+        const resourceList = getResourceAlts(part);
 
         if (playerName && resourceList.length > 0) {
             addResources(playerName, resourceList);
@@ -339,19 +486,15 @@
     }
 
     // Parse received resources messages
-    function parseReceivedResources(msg) {
-        if (!msg.textContent.includes(receivedResourcesSnippet)) return;
-        if (msg.textContent.includes("gave")) return; // Ignore trades
+    function parseReceivedResources(part) {
+        if (!part.textContent.includes(receivedResourcesSnippet)) return;
+        if (part.textContent.includes("gave")) return; // Ignore trades
+        if (part.textContent.includes(initialPlacementDoneMessage)) return; // Handled by parseInitialPlacement
 
-        // Get the username (the inner span inside the message)
-        const usernameSpan = msg.querySelector('span span');
-        const playerName = cleanPlayerName(usernameSpan ? usernameSpan.innerText : "");
+        const usernameSpan = part.querySelector(USERNAME_SPAN_SELECTOR);
+        const playerName = cleanPlayerName(usernameSpan ? usernameSpan.textContent : "");
 
-        // Get resources from img alt attributes
-        const imgs = msg.querySelectorAll('img');
-        const resourceList = Array.from(imgs)
-            .map(img => img.alt?.toLowerCase())
-            .filter(alt => RESOURCE_NAMES.includes(alt));
+        const resourceList = getResourceAlts(part);
 
         if (playerName && resourceList.length > 0) {
             addResources(playerName, resourceList);
@@ -359,16 +502,11 @@
     }
 
     // Parse building messages (cities, roads, settlements)
-    function parseBuilt(msg) {
-        if (!msg.textContent.includes(builtSnippet)) return;
+    function parseBuilt(part) {
+        if (!part.textContent.includes(builtSnippet)) return;
 
-        // Get the username (first span inside the message)
-        const usernameSpan = msg.querySelector('span span');
-        const playerName = cleanPlayerName(usernameSpan ? usernameSpan.innerText : "");
-
-        // Get the built structure from img alt attribute
-        const img = msg.querySelector('img[alt]');
-        const builtType = img ? img.alt?.toLowerCase() : "";
+        const usernameSpan = part.querySelector(USERNAME_SPAN_SELECTOR);
+        const playerName = cleanPlayerName(usernameSpan ? usernameSpan.textContent : "");
 
         // Define resource costs
         const costs = {
@@ -377,19 +515,23 @@
             settlement: { lumber: 1, brick: 1, wool: 1, grain: 1 }
         };
 
-        if (playerName && costs[builtType]) {
+        // Find the structure icon among the message images
+        const builtType = Array.from(part.querySelectorAll('img'))
+            .map(img => img.alt ? img.alt.toLowerCase() : '')
+            .find(alt => costs[alt]);
+
+        if (playerName && builtType) {
             removeResources(playerName, costs[builtType]);
         }
         reviewThefts();
     }
 
     // Parse development card purchase messages
-    function parseBought(msg) {
-        if (!msg.textContent.includes(boughtSnippet)) return;
+    function parseBought(part) {
+        if (!part.textContent.includes(boughtSnippet)) return;
 
-        // Get the username (first span inside the message)
-        const usernameSpan = msg.querySelector('span span');
-        const playerName = cleanPlayerName(usernameSpan ? usernameSpan.innerText : "");
+        const usernameSpan = part.querySelector(USERNAME_SPAN_SELECTOR);
+        const playerName = cleanPlayerName(usernameSpan ? usernameSpan.textContent : "");
 
         // Define the cost for a development card
         const devCardCost = { wool: 1, grain: 1, ore: 1 };
@@ -401,19 +543,14 @@
     }
 
     // Parse trade with bank messages
-    function parseTradeBank(msg) {
-        if (!msg.textContent.includes(tradeBankGaveSnippet) || !msg.textContent.includes(tradeBankTookSnippet)) return;
+    function parseTradeBank(part) {
+        if (!part.textContent.includes(tradeBankGaveSnippet) || !part.textContent.includes(tradeBankTookSnippet)) return;
 
-        // Get the username (first span inside the message)
-        const usernameSpan = msg.querySelector('span span');
-        const playerName = cleanPlayerName(usernameSpan ? usernameSpan.innerText : "");
+        const usernameSpan = part.querySelector(USERNAME_SPAN_SELECTOR);
+        const playerName = cleanPlayerName(usernameSpan ? usernameSpan.textContent : "");
 
-        // Get the main span containing the trade text
-        const tradeSpan = usernameSpan ? usernameSpan.parentElement : null;
-        if (!tradeSpan) return;
-
-        // Get all child nodes (text and images)
-        const nodes = Array.from(tradeSpan.childNodes);
+        // Get all child nodes (text and images) of the message part
+        const nodes = Array.from(part.childNodes);
 
         // Find indices for "gave bank" and "and took"
         let gaveIdx = -1, tookIdx = -1;
@@ -451,9 +588,11 @@
     }
 
     // Parse monopoly card messages (steal resources)
-    function parseStoleAllOf(msg) {
+    function parseStoleAllOf(part) {
         // Handle monopoly card: "<player> stole <number> <resource>" or with <img alt="resource">
-        let text = msg.textContent;
+        const text = part.textContent;
+        if (!text.includes(" stole ")) return;
+
         let playerName, amount, resource;
         // Try to match the original text format
         let match = text.match(/(.+?) stole (\d+) (\w+)/i);
@@ -461,37 +600,25 @@
             playerName = match[1].trim();
             amount = parseInt(match[2], 10);
             resource = match[3].toLowerCase();
-            console.log('[parseStoleAllOf] matched text:', { playerName, amount, resource });
         } else {
-            // Try to match the format with an <img> tag for the resource
-            const span = msg.querySelector('span');
-            console.log('[parseStoleAllOf] span:', span);
-            if (span) {
-                const img = span.querySelector('img[alt]');
-                console.log('[parseStoleAllOf] img:', img);
-                if (img) {
-                    resource = img.getAttribute('alt').toLowerCase();
-                    const beforeImg = span.textContent.match(/(.+?) stole (\d+)/i);
-                    if (beforeImg) {
-                        playerName = beforeImg[1].trim();
-                        amount = parseInt(beforeImg[2], 10);
-                        console.log('[parseStoleAllOf] matched img:', { playerName, amount, resource });
-                    }
-                }
+            // Try to match the format where the resource is shown as an <img>
+            const resources = getResourceAlts(part);
+            const beforeImg = text.match(/(.+?) stole (\d+)/i);
+            if (resources.length > 0 && beforeImg) {
+                playerName = beforeImg[1].trim();
+                amount = parseInt(beforeImg[2], 10);
+                resource = resources[0];
             }
         }
-        console.log('[parseStoleAllOf] final values:', { playerName, amount, resource });
         if (!RESOURCE_NAMES.includes(resource) || !playerName || isNaN(amount)) {
-            console.warn('[parseStoleAllOf] invalid monopoly event:', { playerName, amount, resource });
-            return;
+            return; // Regular robber steals have no number, only monopoly does
         }
 
-        // --- IMPROVED LOGIC: resolve all unresolved thefts for this resource ---
-        // For each unresolved theft where the victim lost this resource, resolve it as this resource
-        console.log('[parseStoleAllOf] thefts before resolving:', JSON.parse(JSON.stringify(thefts)));
+        // Resolve any unresolved thefts of this resource first, so the victim
+        // counts below include stolen cards of the monopolized resource
         thefts.forEach(theft => {
-            if (!theft.solved && theft.what[resource] > 0 && playerResources[theft.victim][resource] > 0) {
-                console.log('[parseStoleAllOf] resolving theft:', theft);
+            if (!theft.solved && theft.what[resource] > 0 &&
+                playerResources[theft.victim] && playerResources[theft.victim][resource] > 0) {
                 playerResources[theft.victim][resource]--;
                 playerResources[theft.victim].total--;
                 if (!playerResources[theft.stealer]) playerResources[theft.stealer] = createEmptyResourceObj();
@@ -500,79 +627,49 @@
                 theft.solved = true;
             }
         });
-        console.log('[parseStoleAllOf] thefts after resolving:', JSON.parse(JSON.stringify(thefts)));
-        console.log('[parseStoleAllOf] playerResources before monopoly:', JSON.parse(JSON.stringify(playerResources)));
+        thefts = thefts.filter(t => !t.solved);
 
         // Ensure monopoly player exists in playerResources
         if (!playerResources[playerName]) {
             playerResources[playerName] = createEmptyResourceObj();
         }
 
-        // Calculate total resources taken from all other players
+        // Strip the monopolized resource from every other player
         let totalTaken = 0;
-        const playersAffected = [];
-        
-        // First pass: calculate total and track affected players
         Object.keys(playerResources).forEach(otherPlayer => {
-            if (otherPlayer !== playerName) {
-                const currentAmount = playerResources[otherPlayer][resource] || 0;
-                if (currentAmount > 0) {
-                    totalTaken += currentAmount;
-                    playersAffected.push({
-                        player: otherPlayer,
-                        amount: currentAmount
-                    });
-                }
+            if (otherPlayer === playerName) return;
+            const currentAmount = playerResources[otherPlayer][resource] || 0;
+            if (currentAmount > 0) {
+                totalTaken += currentAmount;
+                playerResources[otherPlayer][resource] = 0;
+                playerResources[otherPlayer].total = RESOURCE_NAMES.reduce((sum, res) => {
+                    return sum + (playerResources[otherPlayer][res] || 0);
+                }, 0);
             }
         });
 
-        // Second pass: remove resources from affected players and recalculate totals properly
-        playersAffected.forEach(({ player, amount }) => {
-            // Remove the specific resource
-            playerResources[player][resource] = 0;
-            
-            // Recalculate total from scratch to avoid accumulation errors
-            playerResources[player].total = RESOURCE_NAMES.reduce((sum, res) => {
-                return sum + (playerResources[player][res] || 0);
-            }, 0);
-            
-            console.log(`[parseStoleAllOf] ${player} lost ${amount} ${resource}, new total: ${playerResources[player].total}`);
-        });
-
-        // Add resources to monopoly player
-        // Use the actual calculated total taken for accuracy, but validate against message amount
-        const finalAmount = Math.max(totalTaken, amount); // Use whichever is higher for robustness
-        playerResources[playerName][resource] = (playerResources[playerName][resource] || 0) + finalAmount;
-        
-        // Recalculate monopoly player's total from scratch
+        // The message amount comes from the server, so it is the ground truth
+        // for what the monopoly player gained; our per-victim estimate may drift.
+        playerResources[playerName][resource] = (playerResources[playerName][resource] || 0) + amount;
         playerResources[playerName].total = RESOURCE_NAMES.reduce((sum, res) => {
             return sum + (playerResources[playerName][res] || 0);
         }, 0);
 
-        // Log discrepancy if message amount doesn't match calculated amount
         if (totalTaken !== amount) {
-            console.warn(`[parseStoleAllOf] Discrepancy detected: calculated ${totalTaken} but message shows ${amount}. Using ${finalAmount}.`);
+            console.warn(`[parseStoleAllOf] Tracked victims held ${totalTaken} ${resource} but message reports ${amount} stolen.`);
         }
 
-        console.log('[parseStoleAllOf] playerResources after monopoly:', JSON.parse(JSON.stringify(playerResources)));
-        console.log(`[parseStoleAllOf] Monopoly summary: ${playerName} gained ${finalAmount} ${resource} from ${playersAffected.length} players`);
-        
         updateTrackerUI();
     }
 
     // Parse discarded resources messages
-    function parseDiscarded(msg) {
-        if (!msg.textContent.includes(discardedSnippet)) return;
+    function parseDiscarded(part) {
+        if (!part.textContent.includes(discardedSnippet)) return;
 
-        // Get the username (first span inside the message)
-        const usernameSpan = msg.querySelector('span span');
-        const playerName = cleanPlayerName(usernameSpan ? usernameSpan.innerText : "");
+        const usernameSpan = part.querySelector(USERNAME_SPAN_SELECTOR);
+        const playerName = cleanPlayerName(usernameSpan ? usernameSpan.textContent : "");
 
-        // Get discarded resources from img alt attributes
-        const imgs = msg.querySelectorAll('img');
-        const resourceList = Array.from(imgs)
-            .map(img => img.alt?.toLowerCase())
-            .filter(alt => RESOURCE_NAMES.includes(alt));
+        const resourceList = getResourceAlts(part);
 
         // Build resource cost object for discarded resources
         const discardCost = {};
@@ -587,18 +684,17 @@
     }
 
     // Parse trade messages between players
-    function parseTradeWith(msg) {
-        if (!msg.textContent.includes(tradedWithSnippet) || !msg.textContent.includes("and got") || !msg.textContent.includes("from")) return;
+    function parseTradeWith(part) {
+        if (!part.textContent.includes(tradedWithSnippet) || !part.textContent.includes("and got") || !part.textContent.includes("from")) return;
 
-        // Get all inner spans (usernames)
-        const innerSpans = msg.querySelectorAll('span span');
+        // Get the two usernames (colored spans)
+        const innerSpans = part.querySelectorAll(USERNAME_SPAN_SELECTOR);
         if (innerSpans.length < 2) return;
-        const player1 = cleanPlayerName(innerSpans[0].innerText);
-        const player2 = cleanPlayerName(innerSpans[1].innerText);
+        const player1 = cleanPlayerName(innerSpans[0].textContent);
+        const player2 = cleanPlayerName(innerSpans[1].textContent);
 
-        // Get all child nodes of the main span
-        const tradeSpan = innerSpans[0].parentElement;
-        const nodes = Array.from(tradeSpan.childNodes);
+        // Get all child nodes of the message part
+        const nodes = Array.from(part.childNodes);
 
         // Find indices for "gave", "and got", "from"
         let gaveIdx = -1, gotIdx = -1, fromIdx = -1;
@@ -636,85 +732,81 @@
     }
 
     // Parse messages where resources are stolen from the current user
-    function parseStoleFromYou(msg) {
-        if (!msg.textContent.includes(stoleFromYouSnippet)) return;
-        // log('parseStoleFromYou', msg.textContent);
+    function parseStoleFromYou(part) {
+        if (!part.textContent.includes(stoleFromYouSnippet)) return;
 
-        // Get the stealing player's name (inner span)
-        const usernameSpan = msg.querySelector('span span');
+        // Get the stealing player's name (colored span)
+        const usernameSpan = part.querySelector(USERNAME_SPAN_SELECTOR);
         if (!usernameSpan) return;
-        const stealer = cleanPlayerName(usernameSpan.innerText);
+        const stealer = cleanPlayerName(usernameSpan.textContent);
 
         // Get the resource shown (img alt)
-        const img = msg.querySelector('img[alt]');
-        const resource = img ? img.alt?.toLowerCase() : null;
+        const resource = getResourceAlts(part)[0];
 
-        if (!stealer || !resource || !RESOURCE_NAMES.includes(resource) || !currentUserName) return;
+        if (!stealer || !resource || !currentUserName) return;
 
-        // Subtract one resource from current user, add to stealer
-        if (playerResources[currentUserName] && playerResources[currentUserName][resource] > 0) {
+        // The stealer definitely gained this resource; the victim's count may
+        // have drifted, so clamp the subtraction at zero instead of dropping the event.
+        if (!playerResources[currentUserName]) {
+            playerResources[currentUserName] = createEmptyResourceObj();
+        }
+        if (playerResources[currentUserName][resource] > 0) {
             playerResources[currentUserName][resource]--;
             playerResources[currentUserName].total--;
-            if (!playerResources[stealer]) {
-                playerResources[stealer] = createEmptyResourceObj();
-            }
-            playerResources[stealer][resource] = (playerResources[stealer][resource] || 0) + 1;
-            playerResources[stealer].total++;
-            reviewThefts();
-            updateTrackerUI();
         }
+        if (!playerResources[stealer]) {
+            playerResources[stealer] = createEmptyResourceObj();
+        }
+        playerResources[stealer][resource] = (playerResources[stealer][resource] || 0) + 1;
+        playerResources[stealer].total++;
+        reviewThefts();
+        updateTrackerUI();
     }
 
-    // Add this function
-    function parseYouStoleFrom(msg) {
-        if (!msg.textContent.startsWith("You stole")) return;
+    // Parse messages where the current user steals from another player
+    function parseYouStoleFrom(part) {
+        if (!part.textContent.trim().startsWith("You stole")) return;
 
         // Get the resource (img alt)
-        const img = msg.querySelector('img[alt]');
-        const resource = img ? img.alt?.toLowerCase() : null;
+        const resource = getResourceAlts(part)[0];
 
-        // Get the victim's name (inner span)
-        const victimSpan = msg.querySelector('span span');
+        // Get the victim's name (colored span)
+        const victimSpan = part.querySelector(USERNAME_SPAN_SELECTOR);
         if (!victimSpan) return;
-        const victim = cleanPlayerName(victimSpan.innerText);
+        const victim = cleanPlayerName(victimSpan.textContent);
 
-        if (!resource || !RESOURCE_NAMES.includes(resource) || !victim || !currentUserName) return;
+        if (!resource || !victim || !currentUserName) return;
 
-        // Subtract from victim, add to current user
+        // Subtract from victim (clamped at zero), add to current user
         if (playerResources[victim] && playerResources[victim][resource] > 0) {
             playerResources[victim][resource]--;
             playerResources[victim].total--;
-            if (!playerResources[currentUserName]) {
-                playerResources[currentUserName] = createEmptyResourceObj();
-            }
-            playerResources[currentUserName][resource] = (playerResources[currentUserName][resource] || 0) + 1;
-            playerResources[currentUserName].total++;
-            reviewThefts();
-            updateTrackerUI();
         }
+        if (!playerResources[currentUserName]) {
+            playerResources[currentUserName] = createEmptyResourceObj();
+        }
+        playerResources[currentUserName][resource] = (playerResources[currentUserName][resource] || 0) + 1;
+        playerResources[currentUserName].total++;
+        reviewThefts();
+        updateTrackerUI();
     }
 
     // Parse generic steal messages
-    function parseStoleFrom(msg) {
-        if (msg.textContent.includes(stoleFromYouSnippet)) return;
-        if (!msg.textContent.includes("stole") || !msg.textContent.includes("from")) return;
+    function parseStoleFrom(part) {
+        if (part.textContent.includes(stoleFromYouSnippet)) return;
+        if (!part.textContent.includes("stole") || !part.textContent.includes("from")) return;
 
-        // Example: <span><span style="font-weight:600;word-break:break-all;color:#223697">Sal</span> stole <img ...> from <span style="font-weight:600;word-break:break-all;color:#E09742">Malti</span></span>
-        const span = msg.querySelector('span');
-        if (!span) return;
-        const innerSpans = span.querySelectorAll('span');
+        // Example: <span style="color:#223697">Sal</span> stole <img ...> from <span style="color:#E09742">Malti</span>
+        const innerSpans = part.querySelectorAll(USERNAME_SPAN_SELECTOR);
         if (innerSpans.length < 2) return;
-        const stealer = cleanPlayerName(innerSpans[0].innerText);
-        const victim = cleanPlayerName(innerSpans[1].innerText);
+        const stealer = cleanPlayerName(innerSpans[0].textContent);
+        const victim = cleanPlayerName(innerSpans[1].textContent);
         // Only track if both are not the current user
         if (!stealer || !victim || stealer === currentUserName || victim === currentUserName) return;
         // Only track if both exist in playerResources
         if (!playerResources[stealer] || !playerResources[victim]) return;
-        // Get the resource (should be card back, so unknown)
-        const img = span.querySelector('img');
-        const resource = img ? img.alt?.toLowerCase() : null;
-        // Only track if resource is unknown (card back)
-        if (resource && RESOURCE_NAMES.includes(resource)) return; // If resource is known, handled elsewhere
+        // Only track if the stolen card is hidden (card back); known resources are handled elsewhere
+        if (getResourceAlts(part).length > 0) return;
         // Take a snapshot of victim's resources at this time
         const what = {};
         RESOURCE_NAMES.forEach(res => what[res] = playerResources[victim][res] || 0);
@@ -748,6 +840,10 @@
         // Try to resolve thefts if only one possible resource left for a theft
         thefts.forEach(theft => {
             if (theft.solved) return;
+            if (!playerResources[theft.victim]) {
+                theft.solved = true; // Victim no longer tracked; theft is unresolvable
+                return;
+            }
             // Edge case: victim has only one resource type but multiple cards of it
             const possibleResources = RESOURCE_NAMES.filter(res => theft.what[res] > 0);
             if (possibleResources.length === 1) {
@@ -775,10 +871,17 @@
                 theft.solved = true;
                 return;
             }
+            // Edge case: victim has spent everything the snapshot said they had;
+            // the theft can never be resolved, so discard it instead of letting
+            // it pollute the (+n)/(-n) hints forever
+            if (stillPossible.length === 0) {
+                theft.solved = true;
+                return;
+            }
             // Edge case: resource counts go negative (should not happen)
             RESOURCE_NAMES.forEach(res => {
-                if (playerResources[theft.victim][res] < 0) playerResources[theft.victim][res] = 0;
-                if (playerResources[theft.stealer][res] < 0) playerResources[theft.stealer][res] = 0;
+                if (playerResources[theft.victim] && playerResources[theft.victim][res] < 0) playerResources[theft.victim][res] = 0;
+                if (playerResources[theft.stealer] && playerResources[theft.stealer][res] < 0) playerResources[theft.stealer][res] = 0;
             });
         });
         // Remove solved thefts
@@ -788,21 +891,24 @@
 
     // Call all parse functions for each new message
     function handleNewChatMessage(msg) {
-        parseInitialPlacement(msg);
-        parseReceivedResources(msg);
-        parseBuilt(msg);
-        parseBought(msg);
-        parseTradeBank(msg);
-        parseStoleAllOf(msg);
-        parseDiscarded(msg);
-        parseStoleFromYou(msg);
-        parseStoleFrom(msg);
-        parseTradeWith(msg);
-        parseYouStoleFrom(msg);
+        const part = getMessagePart(msg);
+        if (!part) return;
+        registerPlayerColors(part);
+        captureResourceIcons(part);
+        parseInitialPlacement(part);
+        parseReceivedResources(part);
+        parseBuilt(part);
+        parseBought(part);
+        parseTradeBank(part);
+        parseStoleAllOf(part);
+        parseDiscarded(part);
+        parseStoleFromYou(part);
+        parseStoleFrom(part);
+        parseTradeWith(part);
+        parseYouStoleFrom(part);
     }
 
     // Run
     createTrackerPanel();
-    createToggleButton();
     setupObserver();
 })();
