@@ -1,7 +1,7 @@
 ﻿// ==UserScript==
 // @name         Colonist.io Resource Tracker with Toggle
 // @namespace    http://tampermonkey.net/
-// @version      1.2
+// @version      1.3
 // @description  Track each player's resources with a toggleable panel
 // @match        https://colonist.io/*
 // @grant        none
@@ -102,7 +102,7 @@
     // --------------------
     // 2. GLOBAL VARIABLES
     // --------------------
-    // Store player colors, resources, and thefts
+    // Store player colors and resources
     let currentUserName = localStorage.getItem('colonistResourceTrackerUser');
     if (!currentUserName) {
         currentUserName = prompt('Enter your Colonist.io username for resource tracking:');
@@ -113,6 +113,7 @@
     const playerColors = {}; // { playerName: color }
     const initialPlacementDoneMessage = "received starting resources";
     const receivedResourcesSnippet = "got";
+    const yearOfPlentySnippet = "took from bank";
     const builtSnippet = "built a";
     const boughtSnippet = " bought ";
     const tradeBankGaveSnippet = "gave bank";
@@ -120,7 +121,6 @@
     const discardedSnippet = "discarded";
     const tradedWithSnippet = "gave";
     const stoleFromYouSnippet = "from you";
-    let thefts = [];
     // Colonist class names are "<prefix>-<build hash>" (e.g. feedMessage-O8TLknGe);
     // the hash changes every build, so match on the stable prefix only.
     const FEED_MESSAGE_SELECTOR = '[class*="feedMessage-"]';
@@ -281,38 +281,29 @@
             playerColCell.appendChild(nameSpan);
             nameCell.appendChild(playerColCell);
             row.appendChild(nameCell);
-            // Resource cells
-            let total = 0;
+            // Resource cells: show the guaranteed count (lo); if the possible
+            // maximum (hi) is higher, mark the uncertain slack with a "+n?" hint.
             RESOURCE_NAMES.forEach(res => {
                 const td = document.createElement('td');
-                const actual = resources[res] || 0;
-                total += actual;
-                const shown = Math.max(0, actual);
+                const lo = resources.lo[res] || 0;
+                const hi = resources.hi[res] || 0;
                 const countSpan = document.createElement('span');
-                countSpan.className = 'resource-tbl-count' + (shown === 0 ? ' resource-tbl-count-zero' : '');
-                countSpan.textContent = shown;
+                countSpan.className = 'resource-tbl-count' + (lo === 0 ? ' resource-tbl-count-zero' : '');
+                countSpan.textContent = lo;
                 td.appendChild(countSpan);
-                const possibleGain = getPossibleTheftCount(player, res);
-                const possibleLoss = getPossibleTheftLossCount(player, res);
-                if (possibleGain > 0) {
+                if (hi > lo) {
                     const hint = document.createElement('span');
                     hint.className = 'resource-tbl-hint resource-tbl-hint-gain';
-                    hint.textContent = `+${possibleGain}?`;
+                    hint.textContent = `+${hi - lo}?`;
                     hint.title = 'Possible extra cards from unresolved robber steals';
-                    td.appendChild(hint);
-                }
-                if (possibleLoss > 0 && actual > 0) {
-                    const hint = document.createElement('span');
-                    hint.className = 'resource-tbl-hint resource-tbl-hint-loss';
-                    hint.textContent = `-${Math.min(possibleLoss, actual)}?`;
-                    hint.title = 'Possible cards lost to unresolved robber steals';
                     td.appendChild(hint);
                 }
                 row.appendChild(td);
             });
-            // Add total cell
+            // Total cell: the exact hand size (known precisely even when card
+            // types are not).
             const totalCell = document.createElement('td');
-            totalCell.textContent = total;
+            totalCell.textContent = resources.total;
             row.appendChild(totalCell);
             tbody.appendChild(row);
         });
@@ -322,41 +313,134 @@
 
 
     // --------------------
-    // 4. RESOURCE MANAGEMENT
+    // 4. RESOURCE MANAGEMENT (interval model)
     // --------------------
-    // Create an empty resource object
+    // A robber steal takes a random card whose type we usually can't see, so a
+    // player's holding of each resource is a RANGE, not a single number. We track
+    // per resource a guaranteed minimum `lo` and a possible maximum `hi`, plus an
+    // exact `total` (every event — gain, spend, steal — changes the total by a
+    // known amount, even when the card's type is unknown). This keeps totals
+    // correct and never invents cards, while honestly showing type uncertainty.
+
+    function emptyCounts() {
+        const o = {};
+        RESOURCE_NAMES.forEach(r => o[r] = 0);
+        return o;
+    }
     function createEmptyResourceObj() {
-        return { lumber: 0, ore: 0, brick: 0, wool: 0, grain: 0, total: 0 };
+        return { lo: emptyCounts(), hi: emptyCounts(), total: 0 };
+    }
+    function ensurePlayer(player) {
+        if (!playerResources[player]) playerResources[player] = createEmptyResourceObj();
+        return playerResources[player];
     }
 
-    // Add resources to a player's total
-    function addResources(player, resourceList) {
-        if (!playerResources[player]) {
-            playerResources[player] = createEmptyResourceObj();
+    // Arc-consistency: a resource can't exceed the total left after every other
+    // resource's minimum, nor fall below the total minus every other's maximum.
+    // Tightening after each event collapses ranges back to certainty when the
+    // surrounding facts force it.
+    function tightenPlayer(P) {
+        for (let iter = 0; iter < 3; iter++) {
+            RESOURCE_NAMES.forEach(r => {
+                let sumLoOthers = 0, sumHiOthers = 0;
+                RESOURCE_NAMES.forEach(x => { if (x !== r) { sumLoOthers += P.lo[x]; sumHiOthers += P.hi[x]; } });
+                P.hi[r] = Math.min(P.hi[r], P.total - sumLoOthers);
+                P.lo[r] = Math.max(P.lo[r], P.total - sumHiOthers, 0);
+                if (P.hi[r] < 0) P.hi[r] = 0;
+                if (P.lo[r] < 0) P.lo[r] = 0;
+                if (P.lo[r] > P.hi[r]) P.lo[r] = P.hi[r]; // drift safety
+            });
         }
+    }
+
+    // Add known cards (dice income, trades received, Year of Plenty, etc.)
+    function addResources(player, resourceList) {
+        const P = ensurePlayer(player);
         resourceList.forEach(res => {
-            if (RESOURCE_NAMES.includes(res)) {
-                playerResources[player][res]++;
-                playerResources[player].total++;
-            }
+            if (RESOURCE_NAMES.includes(res)) { P.lo[res]++; P.hi[res]++; P.total++; }
         });
-        // Ensure total is only the sum of RESOURCE_NAMES
-        playerResources[player].total = RESOURCE_NAMES.reduce((sum, res) => sum + (playerResources[player][res] || 0), 0);
         updateTrackerUI();
     }
 
-    // Remove resources from a player's total
+    // Remove known cards (builds, dev-card buys, discards, trades/bank given).
+    // The card type is known, so both bounds and the total drop by the count.
     function removeResources(player, resourceCosts) {
         if (!playerResources[player]) return;
+        const P = playerResources[player];
         Object.entries(resourceCosts).forEach(([res, count]) => {
             if (RESOURCE_NAMES.includes(res)) {
-                const before = playerResources[player][res] || 0;
-                const toRemove = Math.min(before, count);
-                playerResources[player][res] = before - toRemove;
+                P.lo[res] = Math.max(0, P.lo[res] - count);
+                P.hi[res] = Math.max(0, P.hi[res] - count);
+                P.total -= count;
             }
         });
-        // Ensure total is only the sum of RESOURCE_NAMES
-        playerResources[player].total = RESOURCE_NAMES.reduce((sum, res) => sum + (playerResources[player][res] || 0), 0);
+        if (P.total < 0) P.total = 0;
+        tightenPlayer(P);
+        updateTrackerUI();
+    }
+
+    // A steal whose card we CAN see (to/from the current user): exact transfer.
+    function stealKnown(victim, stealer, res) {
+        if (!RESOURCE_NAMES.includes(res)) return;
+        const V = ensurePlayer(victim), S = ensurePlayer(stealer);
+        V.lo[res] = Math.max(0, V.lo[res] - 1);
+        V.hi[res] = Math.max(0, V.hi[res] - 1);
+        V.total = Math.max(0, V.total - 1);
+        S.lo[res]++; S.hi[res]++; S.total++;
+        tightenPlayer(V); tightenPlayer(S);
+        updateTrackerUI();
+    }
+
+    // A hidden steal between two other players: exactly one card moves, but its
+    // type is only known to be one the victim could hold. Total is exact for
+    // both; the type stays a range (widening the possibilities) until later
+    // events pin it down.
+    function stealHidden(victim, stealer) {
+        const V = ensurePlayer(victim), S = ensurePlayer(stealer);
+        const cands = RESOURCE_NAMES.filter(r => V.hi[r] > 0);
+        if (cands.length === 0) return; // victim has no cards we can account for
+        V.total -= 1; S.total += 1;
+        if (cands.length === 1) {
+            const r = cands[0];
+            V.lo[r] = Math.max(0, V.lo[r] - 1); V.hi[r] -= 1;
+            S.lo[r]++; S.hi[r]++;
+        } else {
+            // victim may have lost any candidate; stealer may have gained any
+            cands.forEach(r => { V.lo[r] = Math.max(0, V.lo[r] - 1); });
+            cands.forEach(r => { S.hi[r] += 1; });
+        }
+        tightenPlayer(V); tightenPlayer(S);
+        updateTrackerUI();
+    }
+
+    // Monopoly: the server tells us how many cards the player collected, which
+    // is ground truth. Every other player ends with zero of that resource; we
+    // charge each their guaranteed amount first, then spread the remainder over
+    // whoever still had possible (uncertain) copies.
+    function applyMonopoly(mono, res, amount) {
+        if (!RESOURCE_NAMES.includes(res)) return;
+        const M = ensurePlayer(mono);
+        const victims = Object.keys(playerResources).filter(p => p !== mono);
+        const loss = {};
+        let remaining = amount;
+        victims.forEach(p => { const P = playerResources[p]; loss[p] = Math.min(P.lo[res], remaining); remaining -= loss[p]; });
+        for (const p of victims) {
+            if (remaining <= 0) break;
+            const P = playerResources[p];
+            const add = Math.min(P.hi[res] - loss[p], remaining);
+            loss[p] += add; remaining -= add;
+        }
+        victims.forEach(p => {
+            const P = playerResources[p];
+            P.lo[res] = 0; P.hi[res] = 0;
+            P.total = Math.max(0, P.total - loss[p]);
+            tightenPlayer(P);
+        });
+        M.lo[res] += amount; M.hi[res] += amount; M.total += amount;
+        tightenPlayer(M);
+        if (remaining > 0) {
+            console.warn(`[applyMonopoly] ${remaining} ${res} unaccounted — victim tracking had drifted before the monopoly.`);
+        }
         updateTrackerUI();
     }
 
@@ -525,7 +609,6 @@
         if (playerName && builtType) {
             removeResources(playerName, costs[builtType]);
         }
-        reviewThefts();
     }
 
     // Parse development card purchase messages
@@ -541,7 +624,6 @@
         if (playerName) {
             removeResources(playerName, devCardCost);
         }
-        reviewThefts();
     }
 
     // Parse trade with bank messages
@@ -586,7 +668,6 @@
             if (givenList.length > 0) removeResources(playerName, givenCost);
             if (receivedList.length > 0) addResources(playerName, receivedList);
         }
-        reviewThefts();
     }
 
     // Parse monopoly card messages (steal resources)
@@ -616,52 +697,19 @@
             return; // Regular robber steals have no number, only monopoly does
         }
 
-        // Resolve any unresolved thefts of this resource first, so the victim
-        // counts below include stolen cards of the monopolized resource
-        thefts.forEach(theft => {
-            if (!theft.solved && theft.what[resource] > 0 &&
-                playerResources[theft.victim] && playerResources[theft.victim][resource] > 0) {
-                playerResources[theft.victim][resource]--;
-                playerResources[theft.victim].total--;
-                if (!playerResources[theft.stealer]) playerResources[theft.stealer] = createEmptyResourceObj();
-                playerResources[theft.stealer][resource] = (playerResources[theft.stealer][resource] || 0) + 1;
-                playerResources[theft.stealer].total++;
-                theft.solved = true;
-            }
-        });
-        thefts = thefts.filter(t => !t.solved);
+        applyMonopoly(playerName, resource, amount);
+    }
 
-        // Ensure monopoly player exists in playerResources
-        if (!playerResources[playerName]) {
-            playerResources[playerName] = createEmptyResourceObj();
+    // Parse Year of Plenty: "<player> took from bank <res> <res>". Distinct from
+    // a bank trade ("gave bank ... and took ..."), so match the exact phrase.
+    function parseYearOfPlenty(part) {
+        if (!part.textContent.includes(yearOfPlentySnippet)) return;
+        const usernameSpan = part.querySelector(USERNAME_SPAN_SELECTOR);
+        const playerName = cleanPlayerName(usernameSpan ? usernameSpan.textContent : "");
+        const resourceList = getResourceAlts(part);
+        if (playerName && resourceList.length > 0) {
+            addResources(playerName, resourceList);
         }
-
-        // Strip the monopolized resource from every other player
-        let totalTaken = 0;
-        Object.keys(playerResources).forEach(otherPlayer => {
-            if (otherPlayer === playerName) return;
-            const currentAmount = playerResources[otherPlayer][resource] || 0;
-            if (currentAmount > 0) {
-                totalTaken += currentAmount;
-                playerResources[otherPlayer][resource] = 0;
-                playerResources[otherPlayer].total = RESOURCE_NAMES.reduce((sum, res) => {
-                    return sum + (playerResources[otherPlayer][res] || 0);
-                }, 0);
-            }
-        });
-
-        // The message amount comes from the server, so it is the ground truth
-        // for what the monopoly player gained; our per-victim estimate may drift.
-        playerResources[playerName][resource] = (playerResources[playerName][resource] || 0) + amount;
-        playerResources[playerName].total = RESOURCE_NAMES.reduce((sum, res) => {
-            return sum + (playerResources[playerName][res] || 0);
-        }, 0);
-
-        if (totalTaken !== amount) {
-            console.warn(`[parseStoleAllOf] Tracked victims held ${totalTaken} ${resource} but message reports ${amount} stolen.`);
-        }
-
-        updateTrackerUI();
     }
 
     // Parse discarded resources messages
@@ -682,7 +730,6 @@
         if (playerName && resourceList.length > 0) {
             removeResources(playerName, discardCost);
         }
-        reviewThefts();
     }
 
     // Parse trade messages between players
@@ -730,70 +777,38 @@
             if (gotList.length > 0) removeResources(player2, gotCost);
             if (givenList.length > 0) addResources(player2, givenList);
         }
-        reviewThefts();
     }
 
-    // Parse messages where resources are stolen from the current user
+    // Parse messages where resources are stolen from the current user. We see
+    // our own stolen card, so the resource is known — an exact transfer.
     function parseStoleFromYou(part) {
         if (!part.textContent.includes(stoleFromYouSnippet)) return;
 
-        // Get the stealing player's name (colored span)
         const usernameSpan = part.querySelector(USERNAME_SPAN_SELECTOR);
         if (!usernameSpan) return;
         const stealer = cleanPlayerName(usernameSpan.textContent);
-
-        // Get the resource shown (img alt)
         const resource = getResourceAlts(part)[0];
 
         if (!stealer || !resource || !currentUserName) return;
-
-        // The stealer definitely gained this resource; the victim's count may
-        // have drifted, so clamp the subtraction at zero instead of dropping the event.
-        if (!playerResources[currentUserName]) {
-            playerResources[currentUserName] = createEmptyResourceObj();
-        }
-        if (playerResources[currentUserName][resource] > 0) {
-            playerResources[currentUserName][resource]--;
-            playerResources[currentUserName].total--;
-        }
-        if (!playerResources[stealer]) {
-            playerResources[stealer] = createEmptyResourceObj();
-        }
-        playerResources[stealer][resource] = (playerResources[stealer][resource] || 0) + 1;
-        playerResources[stealer].total++;
-        reviewThefts();
-        updateTrackerUI();
+        stealKnown(currentUserName, stealer, resource);
     }
 
-    // Parse messages where the current user steals from another player
+    // Parse messages where the current user steals from another player. We see
+    // the card we took, so the resource is known — an exact transfer.
     function parseYouStoleFrom(part) {
         if (!part.textContent.trim().startsWith("You stole")) return;
 
-        // Get the resource (img alt)
         const resource = getResourceAlts(part)[0];
-
-        // Get the victim's name (colored span)
         const victimSpan = part.querySelector(USERNAME_SPAN_SELECTOR);
         if (!victimSpan) return;
         const victim = cleanPlayerName(victimSpan.textContent);
 
         if (!resource || !victim || !currentUserName) return;
-
-        // Subtract from victim (clamped at zero), add to current user
-        if (playerResources[victim] && playerResources[victim][resource] > 0) {
-            playerResources[victim][resource]--;
-            playerResources[victim].total--;
-        }
-        if (!playerResources[currentUserName]) {
-            playerResources[currentUserName] = createEmptyResourceObj();
-        }
-        playerResources[currentUserName][resource] = (playerResources[currentUserName][resource] || 0) + 1;
-        playerResources[currentUserName].total++;
-        reviewThefts();
-        updateTrackerUI();
+        stealKnown(victim, currentUserName, resource);
     }
 
-    // Parse generic steal messages
+    // Parse hidden steals between two other players. The card's type is unknown,
+    // so exactly one card moves victim -> stealer with the type left uncertain.
     function parseStoleFrom(part) {
         if (part.textContent.includes(stoleFromYouSnippet)) return;
         if (!part.textContent.includes("stole") || !part.textContent.includes("from")) return;
@@ -803,107 +818,14 @@
         if (innerSpans.length < 2) return;
         const stealer = cleanPlayerName(innerSpans[0].textContent);
         const victim = cleanPlayerName(innerSpans[1].textContent);
-        // Only track if both are not the current user
+        // Only track hidden steals between two other players; steals involving
+        // the current user are revealed and handled by the parsers above.
         if (!stealer || !victim || stealer === currentUserName || victim === currentUserName) return;
-        // Only track if both exist in playerResources
         if (!playerResources[stealer] || !playerResources[victim]) return;
-        // Only track if the stolen card is hidden (card back); known resources are handled elsewhere
+        // Only hidden (card-back) steals reach here; a shown resource means the
+        // message is a known steal handled elsewhere.
         if (getResourceAlts(part).length > 0) return;
-        // Take a snapshot of victim's resources at this time
-        const what = {};
-        RESOURCE_NAMES.forEach(res => what[res] = playerResources[victim][res] || 0);
-        thefts.push({ stealer, victim, what, solved: false });
-        // Resolve immediately if already determinate and render the +1?/-1?
-        // hints now, rather than waiting for the next game event to redraw.
-        reviewThefts();
-    }
-
-    // A resource is still a candidate for an unresolved theft only if the
-    // snapshot had it AND the victim still holds at least one (same test Rule 2
-    // uses to rule candidates out). Narrowing here keeps the +n?/-n? hints in
-    // sync with the evidence instead of stuck on the frozen snapshot.
-    function isTheftCandidate(theft, resource) {
-        return !theft.solved && theft.what[resource] > 0 &&
-            playerResources[theft.victim] && playerResources[theft.victim][resource] > 0;
-    }
-
-    // Get the count of possible theft losses for a player/resource
-    function getPossibleTheftLossCount(player, resource) {
-        let possible = 0;
-        thefts.forEach(theft => {
-            if (theft.victim === player && isTheftCandidate(theft, resource)) {
-                possible++;
-            }
-        });
-        return possible;
-    }
-
-    // Returns the number of possible extra resources a player could have for a resource due to unresolved thefts
-    function getPossibleTheftCount(player, resource) {
-        let possible = 0;
-        thefts.forEach(theft => {
-            if (theft.stealer === player && isTheftCandidate(theft, resource)) {
-                possible++;
-            }
-        });
-        return possible;
-    }
-
-    // Call this after any resource change to try to resolve unknown thefts
-    function reviewThefts() {
-        // Try to resolve thefts if only one possible resource left for a theft
-        thefts.forEach(theft => {
-            if (theft.solved) return;
-            if (!playerResources[theft.victim]) {
-                theft.solved = true; // Victim no longer tracked; theft is unresolvable
-                return;
-            }
-            // Edge case: victim has only one resource type but multiple cards of it
-            const possibleResources = RESOURCE_NAMES.filter(res => theft.what[res] > 0);
-            if (possibleResources.length === 1) {
-                const res = possibleResources[0];
-                // The stolen card is certainly `res`, so the stealer definitely
-                // gained one — credit it even if the victim's tracked count has
-                // drifted to 0. Only decrement the victim when we actually can.
-                if (playerResources[theft.victim][res] > 0) {
-                    playerResources[theft.victim][res]--;
-                    playerResources[theft.victim].total--;
-                }
-                if (!playerResources[theft.stealer]) playerResources[theft.stealer] = createEmptyResourceObj();
-                playerResources[theft.stealer][res] = (playerResources[theft.stealer][res] || 0) + 1;
-                playerResources[theft.stealer].total++;
-                theft.solved = true;
-                return;
-            }
-            // Edge case: victim spent or gained resources before theft resolved
-            // If any resource in theft.what is now 0 for victim, remove it from possibleResources
-            let stillPossible = possibleResources.filter(res => playerResources[theft.victim][res] > 0);
-            if (stillPossible.length === 1) {
-                const res = stillPossible[0];
-                playerResources[theft.victim][res]--;
-                playerResources[theft.victim].total--;
-                if (!playerResources[theft.stealer]) playerResources[theft.stealer] = createEmptyResourceObj();
-                playerResources[theft.stealer][res] = (playerResources[theft.stealer][res] || 0) + 1;
-                playerResources[theft.stealer].total++;
-                theft.solved = true;
-                return;
-            }
-            // Edge case: victim has spent everything the snapshot said they had;
-            // the theft can never be resolved, so discard it instead of letting
-            // it pollute the (+n)/(-n) hints forever
-            if (stillPossible.length === 0) {
-                theft.solved = true;
-                return;
-            }
-            // Edge case: resource counts go negative (should not happen)
-            RESOURCE_NAMES.forEach(res => {
-                if (playerResources[theft.victim] && playerResources[theft.victim][res] < 0) playerResources[theft.victim][res] = 0;
-                if (playerResources[theft.stealer] && playerResources[theft.stealer][res] < 0) playerResources[theft.stealer][res] = 0;
-            });
-        });
-        // Remove solved thefts
-        thefts = thefts.filter(t => !t.solved);
-        updateTrackerUI();
+        stealHidden(victim, stealer);
     }
 
     // Call all parse functions for each new message
@@ -917,6 +839,7 @@
         parseBuilt(part);
         parseBought(part);
         parseTradeBank(part);
+        parseYearOfPlenty(part);
         parseStoleAllOf(part);
         parseDiscarded(part);
         parseStoleFromYou(part);
